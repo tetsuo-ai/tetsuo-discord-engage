@@ -154,7 +154,7 @@ class EngagementBot(commands.Cog):
 
     @commands.command(name='!raid')
     @commands.has_permissions(manage_channels=True)
-    async def start_engagement(self, ctx, tweet_url: str, *, targets):
+    async def raid(self, ctx, tweet_url: str, *, targets):
         """Start a X/Twitter engagement challenge
 
         Usage: !raid <tweet_url> <targets>
@@ -339,7 +339,7 @@ class EngagementBot(commands.Cog):
 
     @commands.command(name='!raid_stop')
     @commands.has_permissions(manage_channels=True)
-    async def end_challenge(self, ctx):
+    async def raid_stop(self, ctx):
         """End the current engagement challenge and unlock the channel"""
         if ctx.channel.id in self.locked_channels:
             overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
