@@ -409,16 +409,35 @@ class EngagementBot(commands.Cog):
     async def raid_stop(self, ctx):
         """End the current engagement challenge and unlock the channel"""
         if ctx.channel.id in self.locked_channels:
+            # Unlock channel
             overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
             overwrites.send_messages = True
             await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrites)
             
-            del self.locked_channels[ctx.channel.id]
-            del self.engagement_targets[ctx.channel.id]
+            # Get challenge data and delete messages
+            challenge_data = self.engagement_targets.get(ctx.channel.id)
+            if challenge_data:
+                try:
+                    # Delete lock message
+                    lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
+                    await lock_message.delete()
+                except:
+                    print("Couldn't find lock message to delete")
+                    
+                try:
+                    # Delete progress message
+                    progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
+                    await progress_message.delete()
+                except:
+                    print("Couldn't find progress message to delete")
             
-            await ctx.send("Challenge ended manually. Channel unlocked!")
+            del self.locked_channels[ctx.channel.id]
+            if ctx.channel.id in self.engagement_targets:
+                del self.engagement_targets[ctx.channel.id]
+            
+            await ctx.send("Challenge ended manually. Channel unlocked!", delete_after=5)
         else:
-            await ctx.send("No active challenge in this channel!")
+            await ctx.send("No active challenge in this channel!", delete_after=5)
 
     def cog_unload(self):
         if self.browser:
