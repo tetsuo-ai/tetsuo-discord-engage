@@ -152,19 +152,19 @@ class EngagementBot(commands.Cog):
         filled = int(length * percentage)
         return f"[{'='*filled}{'-'*(length-filled)}]"
 
-    @commands.command(name='start_engagement')
+    @commands.command(name='!raid')
     @commands.has_permissions(manage_channels=True)
     async def start_engagement(self, ctx, tweet_url: str, *, targets):
-        """Start a tweet engagement challenge
+        """Start a X/Twitter engagement challenge
 
-        Usage: !start_engagement <tweet_url> <targets>
-        Example: !start_engagement https://twitter.com/user/123 likes:100 retweets:50
+        Usage: !raid <tweet_url> <targets>
+        Example: !raid https://twitter.com/user/123 likes:100 retweets:50
         
         Available targets:
         • likes - number of likes to reach
         • retweets - number of retweets + quotes to reach
         • bookmarks - number of bookmarks to reach"""
-        print(f"start_engagement called with url: {tweet_url} and targets: {targets}")
+        print(f"raid called with url: {tweet_url} and targets: {targets}")
         
         try:
             if not tweet_url.startswith('http'):
@@ -184,7 +184,7 @@ class EngagementBot(commands.Cog):
                 return
             
             if ctx.channel.id in self.locked_channels:
-                await ctx.send("There's already an active challenge in this channel!")
+                await ctx.send("There's already an active raid in this channel!")
                 return
             
             # Lock the channel
@@ -337,7 +337,7 @@ class EngagementBot(commands.Cog):
             
             await asyncio.sleep(30)
 
-    @commands.command(name='end_challenge')
+    @commands.command(name='!raid_stop')
     @commands.has_permissions(manage_channels=True)
     async def end_challenge(self, ctx):
         """End the current engagement challenge and unlock the channel"""
