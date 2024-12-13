@@ -152,7 +152,7 @@ class EngagementBot(commands.Cog):
         filled = int(length * percentage)
         return f"[{'='*filled}{'-'*(length-filled)}]"
 
-    @commands.command(name='!raid')
+    @commands.command(name='raid')
     @commands.has_permissions(manage_channels=True)
     async def raid(self, ctx, tweet_url: str, *, targets):
         """Start a X/Twitter engagement challenge
@@ -337,7 +337,7 @@ class EngagementBot(commands.Cog):
             
             await asyncio.sleep(30)
 
-    @commands.command(name='!raid_stop')
+    @commands.command(name='raid_stop')
     @commands.has_permissions(manage_channels=True)
     async def raid_stop(self, ctx):
         """End the current engagement challenge and unlock the channel"""
