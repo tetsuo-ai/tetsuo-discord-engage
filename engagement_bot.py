@@ -158,12 +158,13 @@ class EngagementBot(commands.Cog):
         """Start a X/Twitter engagement challenge
 
         Usage: !raid <tweet_url> <targets>
-        Example: !raid https://twitter.com/user/123 likes:100 retweets:50
+        Example: !raid https://twitter.com/user/123 likes:100 retweets:50 timeout:120
         
         Available targets:
         • likes - number of likes to reach
         • retweets - number of retweets + quotes to reach
-        • bookmarks - number of bookmarks to reach"""
+        • bookmarks - number of bookmarks to reach
+        • timeout - minutes until raid auto-ends (default: 15)"""
         print(f"raid called with url: {tweet_url} and targets: {targets}")
         
         try:
@@ -171,10 +172,15 @@ class EngagementBot(commands.Cog):
                 tweet_url = f"https://{tweet_url}"
             
             target_dict = {}
+            timeout_minutes = 15  # Default timeout
+            
             for pair in targets.split():
                 try:
                     metric, value = pair.split(':')
-                    if metric.lower() in ['likes', 'retweets', 'bookmarks']:
+                    if metric.lower() == 'timeout':
+                        timeout_minutes = int(value)
+                        print(f"Setting timeout to {timeout_minutes} minutes")
+                    elif metric.lower() in ['likes', 'retweets', 'bookmarks']:
                         target_dict[metric.lower()] = int(value)
                 except ValueError:
                     continue
@@ -213,11 +219,12 @@ class EngagementBot(commands.Cog):
                 'targets': target_dict,
                 'start_time': datetime.now(),
                 'last_update': datetime.now(),
-                'message_id': challenge_message.id
+                'message_id': challenge_message.id,
+                'timeout': timeout_minutes
             }
             
             # Start monitoring
-            self.bot.loop.create_task(self.monitor_engagement(ctx.channel, tweet_url, target_dict))
+            self.bot.loop.create_task(self.monitor_engagement(ctx.channel, tweet_url, target_dict, timeout_minutes))
             
         except Exception as e:
             print(f"Error in start_engagement: {e}")
@@ -270,9 +277,56 @@ class EngagementBot(commands.Cog):
         
         return embed
 
-    async def monitor_engagement(self, channel, tweet_url, targets):
+    async def monitor_engagement(self, channel, tweet_url, targets, timeout_minutes):
+        start_time = datetime.now()
+        print(f"Raid started at {start_time} with {timeout_minutes} minute timeout")
+        
         while self.locked_channels.get(channel.id):
             try:
+                current_time = datetime.now()
+                elapsed_minutes = (current_time - start_time).total_seconds() / 60
+                print(f"Checking timeout: {elapsed_minutes:.2f} minutes elapsed of {timeout_minutes} allowed")
+            
+                if elapsed_minutes > timeout_minutes:
+                    print(f"Timeout triggered after {elapsed_minutes:.2f} minutes")
+                # Check for timeout
+                if (datetime.now() - start_time).total_seconds() > timeout_minutes * 60:
+                    # Unlock channel
+                    overwrites = channel.overwrites_for(channel.guild.default_role)
+                    overwrites.send_messages = True
+                    await channel.set_permissions(channel.guild.default_role, overwrite=overwrites)
+                    
+                    # Get the original message
+                    challenge_data = self.engagement_targets.get(channel.id)
+                    if challenge_data:
+                        try:
+                            message = await channel.fetch_message(challenge_data['message_id'])
+                            metrics = await self.get_tweet_metrics(tweet_url)
+                            
+                            # Create timeout embed
+                            timeout_embed = await self.create_progress_embed(tweet_url, targets, metrics)
+                            timeout_embed.color = 0xFF6B6B  # Soft red
+                            
+                            # Add timeout message
+                            timeout_embed.add_field(
+                                name="\u200b",
+                                value="\u200b",
+                                inline=False
+                            )
+                            timeout_embed.add_field(
+                                name="⏰ RAID TIMED OUT! ⏰",
+                                value=f"```diff\n- Raid ended after {timeout_minutes} minutes! Channel unlocked! 🔓\n```",
+                                inline=False
+                            )
+                            
+                            await message.edit(embed=timeout_embed)
+                        except:
+                            print("Couldn't find original message for timeout update")
+                    
+                    del self.locked_channels[channel.id]
+                    del self.engagement_targets[channel.id]
+                    return
+
                 metrics = await self.get_tweet_metrics(tweet_url)
                 
                 challenge_data = self.engagement_targets.get(channel.id)
