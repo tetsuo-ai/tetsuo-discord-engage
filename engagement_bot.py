@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -15,11 +15,60 @@ class EngagementBot(commands.Cog):
         self.browser = None
         self.locked_channels = {}
         self.engagement_targets = {}
+        self.cleanup_task = None
 
     @commands.Cog.listener()
     async def on_ready(self):
         print('EngagementBot is ready')
         await self.setup_playwright()
+        self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
+
+    async def cleanup_messages(self):
+        while True:
+            try:
+                # Process each channel the bot has access to
+                for channel in self.bot.get_all_channels():
+                    if isinstance(channel, discord.TextChannel):
+                        try:
+                            current_time = datetime.now(timezone.utc)
+                            async for message in channel.history(limit=None):
+                                # Skip pinned messages
+                                if message.pinned:
+                                    continue
+                                    
+                                # Calculate message age
+                                message_age = (current_time - message.created_at).total_seconds()
+                                
+                                # Bot messages: Delete if older than 8 hours
+                                if message.author.bot:
+                                    if message_age > (8 * 3600):  # 8 hours in seconds
+                                        await message.delete()
+                                        print(f"Deleted bot message")
+                                # Non-bot messages: Delete if older than 15 minutes
+                                else:
+                                    if message_age > (15 * 60):  # 15 minutes in seconds
+                                        await message.delete()
+                                        print(f"Deleted user message")
+                                        
+                                # Add a small delay to avoid rate limits
+                                await asyncio.sleep(1)
+                                
+                        except Exception as e:
+                            print(f"Error cleaning messages in channel {channel.name}: {e}")
+                            continue
+                            
+                # Run cleanup every 5 minutes
+                await asyncio.sleep(300)
+                
+            except Exception as e:
+                print(f"Error in cleanup task: {e}")
+                await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
+
+    def cog_unload(self):
+        if self.browser:
+            asyncio.create_task(self.browser.close())
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
 
     async def setup_playwright(self):
         try:
@@ -216,8 +265,8 @@ class EngagementBot(commands.Cog):
             self.engagement_targets[ctx.channel.id] = {
                 'tweet_url': tweet_url,
                 'targets': target_dict,
-                'start_time': datetime.now(),
-                'last_update': datetime.now(),
+                'start_time': datetime.now(timezone.utc),
+                'last_update': datetime.now(timezone.utc),
                 'message_id': challenge_message.id,
                 'lock_message_id': lock_message.id,
                 'timeout': timeout_minutes
@@ -272,25 +321,25 @@ class EngagementBot(commands.Cog):
             inline=False
         )
         
-        embed.timestamp = datetime.now()
+        embed.timestamp = datetime.now(timezone.utc)
         embed.set_footer(text="Last updated")
         
         return embed
 
     async def monitor_engagement(self, channel, tweet_url, targets, timeout_minutes):
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
         print(f"Raid started at {start_time} with {timeout_minutes} minute timeout")
         
         while self.locked_channels.get(channel.id):
             try:
-                current_time = datetime.now()
+                current_time = datetime.now(timezone.utc)
                 elapsed_minutes = (current_time - start_time).total_seconds() / 60
                 print(f"Checking timeout: {elapsed_minutes:.2f} minutes elapsed of {timeout_minutes} allowed")
             
                 if elapsed_minutes > timeout_minutes:
                     print(f"Timeout triggered after {elapsed_minutes:.2f} minutes")
                 # Check for timeout
-                if (datetime.now() - start_time).total_seconds() > timeout_minutes * 60:
+                if (datetime.now(timezone.utc) - start_time).total_seconds() > timeout_minutes * 60:
                     # Unlock channel
                     overwrites = channel.overwrites_for(channel.guild.default_role)
                     overwrites.send_messages = True
@@ -340,12 +389,12 @@ class EngagementBot(commands.Cog):
                 if not challenge_data:
                     break
                     
-                time_since_update = datetime.now() - challenge_data['last_update']
+                time_since_update = datetime.now(timezone.utc) - challenge_data['last_update']
                 if time_since_update.total_seconds() < 15:
                     await asyncio.sleep(3)
                     continue
                 
-                challenge_data['last_update'] = datetime.now()
+                challenge_data['last_update'] = datetime.now(timezone.utc)
                 
                 # Get the original message
                 try:
