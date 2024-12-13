@@ -207,8 +207,7 @@ class EngagementBot(commands.Cog):
                 color=0xFF0000  # Bright red
             )
             lock_embed.set_footer(text="Channel will automatically unlock when targets are reached")
-
-            await ctx.send(embed=lock_embed)
+            lock_message = await ctx.send(embed=lock_embed)
             
             # Send challenge message and store it
             embed = await self.create_progress_embed(tweet_url, target_dict)
@@ -220,6 +219,7 @@ class EngagementBot(commands.Cog):
                 'start_time': datetime.now(),
                 'last_update': datetime.now(),
                 'message_id': challenge_message.id,
+                'lock_message_id': lock_message.id,
                 'timeout': timeout_minutes
             }
             
@@ -300,6 +300,13 @@ class EngagementBot(commands.Cog):
                     challenge_data = self.engagement_targets.get(channel.id)
                     if challenge_data:
                         try:
+                            # Delete lock message
+                            try:
+                                lock_message = await channel.fetch_message(challenge_data['lock_message_id'])
+                                await lock_message.delete()
+                            except:
+                                print("Couldn't find lock message to delete")
+
                             message = await channel.fetch_message(challenge_data['message_id'])
                             metrics = await self.get_tweet_metrics(tweet_url)
                             
@@ -360,6 +367,12 @@ class EngagementBot(commands.Cog):
                     overwrites.send_messages = True
                     await channel.set_permissions(channel.guild.default_role, overwrite=overwrites)
                     
+                    # Delete lock message
+                    try:
+                        lock_message = await channel.fetch_message(challenge_data['lock_message_id'])
+                        await lock_message.delete()
+                    except:
+                        print("Couldn't find lock message to delete")
                     # Update progress message with completion
                     final_embed = await self.create_progress_embed(tweet_url, targets, metrics)
                     final_embed.color = 0x00FF00  # Bright green
