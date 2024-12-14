@@ -438,22 +438,41 @@ class EngagementBot(commands.Cog):
         print(f"raid called with url: {tweet_url} and targets: {targets}")
         
         try:
-            if not tweet_url.startswith('http'):
-                tweet_url = f"https://{tweet_url}"
-            
-            target_dict = {}
-            timeout_minutes = 15  # Default timeout
-            
-            for pair in targets.split():
+            # Validate tweet URL
+        if not re.match(r'^https?://(twitter\.com|x\.com)/\w+/status/\d+$', tweet_url):
+            await ctx.send("❌ Invalid tweet URL. Please provide a valid Twitter/X status URL.", delete_after=10)
+            return
+
+        # Parse and validate targets
+        target_dict = {}
+        timeout_minutes = 15  # Default timeout
+        
+        # Split on whitespace but ignore malformed input
+        valid_metrics = {'likes', 'retweets', 'bookmarks', 'timeout'}
+        for pair in targets.split():
+            try:
+                if ':' not in pair:
+                    continue
+                    
+                metric, value = pair.split(':', 1)
+                metric = metric.lower()
+                
+                if metric not in valid_metrics:
+                    continue
+                
+                # Validate value is a positive integer
                 try:
-                    metric, value = pair.split(':')
-                    if metric.lower() == 'timeout':
-                        timeout_minutes = int(value)
-                        print(f"Setting timeout to {timeout_minutes} minutes")
-                    elif metric.lower() in ['likes', 'retweets', 'bookmarks']:
-                        target_dict[metric.lower()] = int(value)
+                    value = int(value)
+                    if metric == 'timeout':
+                        # Timeout: 1-120 minutes
+                        timeout_minutes = max(1, min(120, value))
+                    elif value > 0 and value <= 1000000:  # Reasonable max value
+                        target_dict[metric] = value
                 except ValueError:
                     continue
+                    
+            except Exception:
+                continue
             
             if not target_dict:
                 await ctx.send("Please provide valid targets (e.g., `likes:100 retweets:50`)")
