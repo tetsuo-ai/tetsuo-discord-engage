@@ -1,3 +1,4 @@
+from .base_raid import BaseRaid
 import discord
 from discord.ext import commands
 import asyncio
@@ -10,17 +11,14 @@ import json
 
 load_dotenv()
 
-class EngagementBot(commands.Cog):
+class TwitterRaid(BaseRaid):
     def __init__(self, bot):
-        self.bot = bot
+        super().__init__(bot)
         self.browser = None
-        self.locked_channels = {}
-        self.engagement_targets = {}
-        self.cleanup_task = None
         self.raid_history = []
-        self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
         self.history_file = 'raid_history.json'
         self.load_raid_history()
+        self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
 
     def load_raid_history(self):
         try:
@@ -54,94 +52,6 @@ class EngagementBot(commands.Cog):
                 json.dump(history_data, f, indent=2)
         except Exception as e:
             print(f"Error saving raid history: {e}")
-
-    @commands.command(name='raid_channel')
-    @commands.has_permissions(manage_channels=True)
-    async def raid_channel(self, ctx):
-        """Display information about the current raid channel"""
-        if not self.raid_channel_id:
-            await ctx.send("❌ No raid channel has been set! An administrator must use !set_raid_channel to configure one.", delete_after=30)
-            return
-            
-        channel = self.bot.get_channel(self.raid_channel_id)
-        if not channel:
-            await ctx.send("⚠️ Configured raid channel not found! The channel may have been deleted.", delete_after=30)
-            return
-            
-        embed = discord.Embed(
-            title="🎯 Raid Channel Configuration",
-            color=0x00FF00
-        )
-        
-        embed.add_field(
-            name="Current Raid Channel",
-            value=f"#{channel.name} (`{channel.id}`)",
-            inline=False
-        )
-        
-        if ctx.channel.id == self.raid_channel_id:
-            embed.add_field(
-                name="Status",
-                value="✅ You are in the raid channel",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="Status",
-                value=f"ℹ️ Raid channel is <#{self.raid_channel_id}>",
-                inline=False
-            )
-            
-        await ctx.send(embed=embed, delete_after=30)
-
-    @commands.command(name='set_raid_channel')
-    @commands.has_permissions(administrator=True)
-    async def set_raid_channel(self, ctx):
-        """Set the current channel as the designated raid channel"""
-        self.raid_channel_id = ctx.channel.id
-        
-        # Update .env file
-        env_path = '.env'
-        new_var = f'RAID_CHANNEL_ID={ctx.channel.id}'
-        
-        # Read existing .env content
-        if os.path.exists(env_path):
-            with open(env_path, 'r') as file:
-                lines = file.readlines()
-            
-            # Check if RAID_CHANNEL_ID already exists
-            found = False
-            for i, line in enumerate(lines):
-                if line.startswith('RAID_CHANNEL_ID='):
-                    lines[i] = f'{new_var}\n'
-                    found = True
-                    break
-            
-            # Add new line if not found
-            if not found:
-                lines.append(f'\n{new_var}\n')
-            
-            # Write back to file
-            with open(env_path, 'w') as file:
-                file.writelines(lines)
-        else:
-            # Create new .env file if it doesn't exist
-            with open(env_path, 'a') as file:
-                file.write(f'{new_var}\n')
-        
-        await ctx.send(f"✅ This channel has been set as the raid channel. All raid commands will only work here.\nChannel ID: `{ctx.channel.id}`", delete_after=30)
-
-    async def check_raid_channel(self, ctx):
-        """Check if the command is being used in the designated raid channel"""
-        if not self.raid_channel_id:
-            await ctx.send("❌ No raid channel has been set! An administrator must use !set_raid_channel first.", delete_after=10)
-            return False
-        
-        if ctx.channel.id != self.raid_channel_id:
-            await ctx.send("❌ This command can only be used in the designated raid channel.", delete_after=10)
-            return False
-            
-        return True
 
     async def update_raid_history(self, channel_id, tweet_url, success, duration_minutes, final_progress):
         if not self.raid_channel_id:
@@ -232,61 +142,12 @@ class EngagementBot(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print('EngagementBot is ready')
+        print('TwitterRaid is ready')
         await self.setup_playwright()
-        self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
-
-    async def cleanup_messages(self):
-        while True:
-            try:
-                if not self.raid_channel_id:
-                    await asyncio.sleep(300)  # Sleep 5 mins if no raid channel set
-                    continue
-                    
-                channel = self.bot.get_channel(self.raid_channel_id)
-                if not channel:
-                    await asyncio.sleep(300)
-                    continue
-                    
-                try:
-                    current_time = datetime.now(timezone.utc)
-                    async for message in channel.history(limit=None):
-                        # Skip pinned messages
-                        if message.pinned:
-                            continue
-                            
-                        # Calculate message age
-                        message_age = (current_time - message.created_at).total_seconds()
-                        
-                        # Bot messages: Delete if older than 8 hours
-                        if message.author.bot:
-                            if message_age > (8 * 3600):  # 8 hours in seconds
-                                await message.delete()
-                                print(f"Deleted bot message")
-                        # Non-bot messages: Delete if older than 15 minutes
-                        else:
-                            if message_age > (15 * 60):  # 15 minutes in seconds
-                                await message.delete()
-                                print(f"Deleted user message")
-                                
-                        # Add a small delay to avoid rate limits
-                        await asyncio.sleep(1)
-                        
-                except Exception as e:
-                    print(f"Error cleaning messages in raid channel: {e}")
-                    
-                # Run cleanup every 5 minutes
-                await asyncio.sleep(300)
-                
-            except Exception as e:
-                print(f"Error in cleanup task: {e}")
-                await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
 
     def cog_unload(self):
         if self.browser:
             asyncio.create_task(self.browser.close())
-        if self.cleanup_task:
-            self.cleanup_task.cancel()
         self.raid_history.clear()
 
     async def setup_playwright(self):
@@ -724,57 +585,9 @@ class EngagementBot(commands.Cog):
             
             await asyncio.sleep(30)
 
-    @commands.command(name='raid_stop')
-    @commands.has_permissions(manage_channels=True)
-    async def raid_stop(self, ctx):
-        """End the current engagement challenge and unlock the channel"""
-        if not await self.check_raid_channel(ctx):
-            return
-        if ctx.channel.id in self.locked_channels:
-            try:
-                # Get challenge data first
-                challenge_data = self.engagement_targets.get(ctx.channel.id)
-                if challenge_data:
-                    try:
-                        # Delete lock message
-                        lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
-                        if lock_message:
-                            await lock_message.delete()
-                    except discord.NotFound:
-                        print("Lock message already deleted")
-                    except Exception as e:
-                        print(f"Error deleting lock message: {e}")
-                        
-                    try:
-                        # Delete progress message
-                        progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
-                        if progress_message:
-                            await progress_message.delete()
-                    except discord.NotFound:
-                        print("Progress message already deleted")
-                    except Exception as e:
-                        print(f"Error deleting progress message: {e}")
-
-                # Only after message deletion attempts, unlock channel
-                overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
-                overwrites.send_messages = True
-                await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrites)
-                
-                # Clear tracking data last
-                self.locked_channels.pop(ctx.channel.id, None)
-                self.engagement_targets.pop(ctx.channel.id, None)
-                
-                await ctx.send("Challenge ended manually. Channel unlocked!", delete_after=5)
-                
-            except Exception as e:
-                print(f"Error in raid_stop: {e}")
-                await ctx.send("Error stopping raid. Channel may need manual unlock.", delete_after=5)
-        else:
-            await ctx.send("No active challenge in this channel!", delete_after=5)
-
     def cog_unload(self):
         if self.browser:
             asyncio.create_task(self.browser.close())
 
 async def setup(bot):
-    await bot.add_cog(EngagementBot(bot))
+    await bot.add_cog(TwitterRaid(bot))

@@ -43,11 +43,26 @@ async def main():
         await ctx.send('pong!')
     
     try:
-        print("Loading engagement_bot extension...")
-        await bot.load_extension('engagement_bot')
-        print("Engagement bot loaded successfully!")
+        # Load channel manager first
+        print("Loading Channel manager extension...")
+        await bot.load_extension('cogs.channel_manager')
+        print("Channel manager loaded successfully!")
+
+        # Load raid extensions
+        print("Loading Twitter raid extension...")
+        await bot.load_extension('cogs.twitter_raid')
+        print("Twitter raid loaded successfully!")
+        
+        print("Loading CMC raid extension...")
+        await bot.load_extension('cogs.cmc_raid')
+        print("CMC raid loaded successfully!")
+
+        print("Loading Gecko raid extension...")
+        await bot.load_extension('cogs.gecko_raid')
+        print("Gecko raid loaded successfully!")
+        
     except Exception as e:
-        print(f"Failed to load engagement_bot: {e}")
+        print(f"Failed to load extension: {e}")
     
     try:
         print("Attempting to start bot...")
