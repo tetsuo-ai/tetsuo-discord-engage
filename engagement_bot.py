@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -16,6 +16,99 @@ class EngagementBot(commands.Cog):
         self.locked_channels = {}
         self.engagement_targets = {}
         self.cleanup_task = None
+        self.raid_history = []
+        self.raid_channel_id = None
+
+    async def update_raid_history(self, channel_id, tweet_url, success, duration_minutes, final_progress):
+        # Set raid channel if not set
+        if not self.raid_channel_id:
+            self.raid_channel_id = channel_id
+        
+        # Only track history for designated channel
+        if channel_id != self.raid_channel_id:
+            return
+            
+        self.raid_history.append({
+            'tweet_url': tweet_url,
+            'success': success,
+            'timestamp': datetime.now(timezone.utc),
+            'duration': duration_minutes,
+            'progress': final_progress
+        })
+        
+        # Keep only last 24 hours
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+        self.raid_history = [
+            raid for raid in self.raid_history 
+            if raid['timestamp'] > cutoff
+        ]
+        
+        await self.update_raid_summary()
+
+    async def update_raid_summary(self):
+        channel = self.bot.get_channel(self.raid_channel_id)
+        if not channel:
+            return
+
+        # Find existing pinned summary or None
+        existing_summary = None
+        pins = await channel.pins()
+        for message in pins:  # Now we can iterate normally
+            if message.author == self.bot.user and "RAID PERFORMANCE SUMMARY" in message.content:
+                existing_summary = message
+                break
+
+        # Get raids from last 24h
+        if not self.raid_history:
+            if existing_summary:
+                await existing_summary.delete()
+            return
+
+        # Calculate statistics
+        total_raids = len(self.raid_history)
+        successful_raids = sum(1 for raid in self.raid_history if raid['success'])
+        
+        # Create summary message
+        summary = "```ansi\n"  # Start of code block with ANSI formatting
+        summary += "\x1b[1;36m📊 RAID PERFORMANCE SUMMARY (24h)\x1b[0m\n"  # Cyan colored header
+        summary += f"Total Raids: {total_raids} | Successful: {successful_raids} | "
+        summary += f"Timeouts: {total_raids - successful_raids}\n\n"
+        summary += "\x1b[1;97mRECENT RAIDS:\x1b[0m\n"  # Bright white section header
+
+        # Add individual raid entries (most recent first)
+        for raid in sorted(self.raid_history, key=lambda x: x['timestamp'], reverse=True):
+            time_ago = self.format_time_ago(raid['timestamp'])
+            status = "✅ SUCCESS - All targets met" if raid['success'] else "❌ TIMEOUT"
+            
+            if raid['progress']:
+                progress_str = f" - Reached {max(raid['progress'].values()):.0f}% of targets"
+                status += progress_str if not raid['success'] else ""
+            
+            summary += f"\n   🔗 <{raid['tweet_url']}>\n"
+            summary += f"   {status}\n"
+            summary += f"   ⏰ Duration: {raid['duration']:.0f} minutes\n"
+            summary += f"   🕒 {time_ago}\n"
+
+        summary += "```"  # End of code block
+
+        # Update or create pinned message
+        if existing_summary:
+            await existing_summary.edit(content=summary)
+        else:
+            new_summary = await channel.send(summary)
+            await new_summary.pin()
+
+    def format_time_ago(self, timestamp):
+        delta = datetime.now(timezone.utc) - timestamp
+        hours = delta.total_seconds() / 3600
+        
+        if hours < 1:
+            minutes = delta.total_seconds() / 60
+            return f"{minutes:.0f} minutes ago"
+        elif hours < 24:
+            return f"{hours:.0f} hours ago"
+        else:
+            return f"{hours/24:.0f} days ago"
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -69,6 +162,7 @@ class EngagementBot(commands.Cog):
             asyncio.create_task(self.browser.close())
         if self.cleanup_task:
             self.cleanup_task.cancel()
+        self.raid_history.clear()
 
     async def setup_playwright(self):
         try:
@@ -337,6 +431,21 @@ class EngagementBot(commands.Cog):
                 print(f"Checking timeout: {elapsed_minutes:.2f} minutes elapsed of {timeout_minutes} allowed")
             
                 if elapsed_minutes > timeout_minutes:
+                    # Calculate progress percentages
+                    progress_percentages = {
+                        metric: (metrics.get(metric, 0) / target * 100) 
+                        for metric, target in targets.items()
+                    }
+                    
+                    # Update raid history
+                    await self.update_raid_history(
+                        channel.id,
+                        tweet_url,
+                        success=False,
+                        duration_minutes=timeout_minutes,
+                        final_progress=progress_percentages
+                    )
+
                     print(f"Timeout triggered after {elapsed_minutes:.2f} minutes")
                 # Check for timeout
                 if (datetime.now(timezone.utc) - start_time).total_seconds() > timeout_minutes * 60:
@@ -411,6 +520,22 @@ class EngagementBot(commands.Cog):
                         break
                 
                 if all_met:
+                    # Calculate duration
+                    duration = (datetime.now(timezone.utc) - start_time).total_seconds() / 60
+                    
+                    # Update raid history
+                    progress_percentages = {
+                        metric: (metrics.get(metric, 0) / target * 100) 
+                        for metric, target in targets.items()
+                    }
+                    await self.update_raid_history(
+                        channel.id,
+                        tweet_url,
+                        success=True,
+                        duration_minutes=duration,
+                        final_progress=progress_percentages
+                    )
+
                     # Unlock channel
                     overwrites = channel.overwrites_for(channel.guild.default_role)
                     overwrites.send_messages = True
@@ -458,33 +583,44 @@ class EngagementBot(commands.Cog):
     async def raid_stop(self, ctx):
         """End the current engagement challenge and unlock the channel"""
         if ctx.channel.id in self.locked_channels:
-            # Unlock channel
-            overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
-            overwrites.send_messages = True
-            await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrites)
-            
-            # Get challenge data and delete messages
-            challenge_data = self.engagement_targets.get(ctx.channel.id)
-            if challenge_data:
-                try:
-                    # Delete lock message
-                    lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
-                    await lock_message.delete()
-                except:
-                    print("Couldn't find lock message to delete")
-                    
-                try:
-                    # Delete progress message
-                    progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
-                    await progress_message.delete()
-                except:
-                    print("Couldn't find progress message to delete")
-            
-            del self.locked_channels[ctx.channel.id]
-            if ctx.channel.id in self.engagement_targets:
-                del self.engagement_targets[ctx.channel.id]
-            
-            await ctx.send("Challenge ended manually. Channel unlocked!", delete_after=5)
+            try:
+                # Get challenge data first
+                challenge_data = self.engagement_targets.get(ctx.channel.id)
+                if challenge_data:
+                    try:
+                        # Delete lock message
+                        lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
+                        if lock_message:
+                            await lock_message.delete()
+                    except discord.NotFound:
+                        print("Lock message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting lock message: {e}")
+                        
+                    try:
+                        # Delete progress message
+                        progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
+                        if progress_message:
+                            await progress_message.delete()
+                    except discord.NotFound:
+                        print("Progress message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting progress message: {e}")
+
+                # Only after message deletion attempts, unlock channel
+                overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
+                overwrites.send_messages = True
+                await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrites)
+                
+                # Clear tracking data last
+                self.locked_channels.pop(ctx.channel.id, None)
+                self.engagement_targets.pop(ctx.channel.id, None)
+                
+                await ctx.send("Challenge ended manually. Channel unlocked!", delete_after=5)
+                
+            except Exception as e:
+                print(f"Error in raid_stop: {e}")
+                await ctx.send("Error stopping raid. Channel may need manual unlock.", delete_after=5)
         else:
             await ctx.send("No active challenge in this channel!", delete_after=5)
 
