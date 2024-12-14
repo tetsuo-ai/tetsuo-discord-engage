@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 import re
+import json
 
 load_dotenv()
 
@@ -17,14 +18,135 @@ class EngagementBot(commands.Cog):
         self.engagement_targets = {}
         self.cleanup_task = None
         self.raid_history = []
-        self.raid_channel_id = None
+        self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
+        self.history_file = 'raid_history.json'
+        self.load_raid_history()
+
+    def load_raid_history(self):
+        try:
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r') as f:
+                    data = json.load(f)
+                    # Convert stored timestamps back to datetime objects
+                    for raid in data:
+                        raid['timestamp'] = datetime.fromisoformat(raid['timestamp'])
+                    self.raid_history = data
+                    # Clean up old entries on load
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+                    self.raid_history = [
+                        raid for raid in self.raid_history 
+                        if raid['timestamp'] > cutoff
+                    ]
+        except Exception as e:
+            print(f"Error loading raid history: {e}")
+            self.raid_history = []
+
+    def save_raid_history(self):
+        try:
+            # Convert datetime objects to ISO format strings for JSON serialization
+            history_data = []
+            for raid in self.raid_history:
+                raid_copy = raid.copy()
+                raid_copy['timestamp'] = raid_copy['timestamp'].isoformat()
+                history_data.append(raid_copy)
+                
+            with open(self.history_file, 'w') as f:
+                json.dump(history_data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving raid history: {e}")
+
+    @commands.command(name='raid_channel')
+    @commands.has_permissions(manage_channels=True)
+    async def raid_channel(self, ctx):
+        """Display information about the current raid channel"""
+        if not self.raid_channel_id:
+            await ctx.send("❌ No raid channel has been set! An administrator must use !set_raid_channel to configure one.", delete_after=30)
+            return
+            
+        channel = self.bot.get_channel(self.raid_channel_id)
+        if not channel:
+            await ctx.send("⚠️ Configured raid channel not found! The channel may have been deleted.", delete_after=30)
+            return
+            
+        embed = discord.Embed(
+            title="🎯 Raid Channel Configuration",
+            color=0x00FF00
+        )
+        
+        embed.add_field(
+            name="Current Raid Channel",
+            value=f"#{channel.name} (`{channel.id}`)",
+            inline=False
+        )
+        
+        if ctx.channel.id == self.raid_channel_id:
+            embed.add_field(
+                name="Status",
+                value="✅ You are in the raid channel",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="Status",
+                value=f"ℹ️ Raid channel is <#{self.raid_channel_id}>",
+                inline=False
+            )
+            
+        await ctx.send(embed=embed, delete_after=30)
+
+    @commands.command(name='set_raid_channel')
+    @commands.has_permissions(administrator=True)
+    async def set_raid_channel(self, ctx):
+        """Set the current channel as the designated raid channel"""
+        self.raid_channel_id = ctx.channel.id
+        
+        # Update .env file
+        env_path = '.env'
+        new_var = f'RAID_CHANNEL_ID={ctx.channel.id}'
+        
+        # Read existing .env content
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as file:
+                lines = file.readlines()
+            
+            # Check if RAID_CHANNEL_ID already exists
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith('RAID_CHANNEL_ID='):
+                    lines[i] = f'{new_var}\n'
+                    found = True
+                    break
+            
+            # Add new line if not found
+            if not found:
+                lines.append(f'\n{new_var}\n')
+            
+            # Write back to file
+            with open(env_path, 'w') as file:
+                file.writelines(lines)
+        else:
+            # Create new .env file if it doesn't exist
+            with open(env_path, 'a') as file:
+                file.write(f'{new_var}\n')
+        
+        await ctx.send(f"✅ This channel has been set as the raid channel. All raid commands will only work here.\nChannel ID: `{ctx.channel.id}`", delete_after=30)
+
+    async def check_raid_channel(self, ctx):
+        """Check if the command is being used in the designated raid channel"""
+        if not self.raid_channel_id:
+            await ctx.send("❌ No raid channel has been set! An administrator must use !set_raid_channel first.", delete_after=10)
+            return False
+        
+        if ctx.channel.id != self.raid_channel_id:
+            await ctx.send("❌ This command can only be used in the designated raid channel.", delete_after=10)
+            return False
+            
+        return True
 
     async def update_raid_history(self, channel_id, tweet_url, success, duration_minutes, final_progress):
-        # Set raid channel if not set
         if not self.raid_channel_id:
             self.raid_channel_id = channel_id
-        
-        # Only track history for designated channel
+            
         if channel_id != self.raid_channel_id:
             return
             
@@ -36,13 +158,13 @@ class EngagementBot(commands.Cog):
             'progress': final_progress
         })
         
-        # Keep only last 24 hours
         cutoff = datetime.now(timezone.utc) - timedelta(days=1)
         self.raid_history = [
             raid for raid in self.raid_history 
             if raid['timestamp'] > cutoff
         ]
         
+        self.save_raid_history()  # Save after updating
         await self.update_raid_summary()
 
     async def update_raid_summary(self):
@@ -53,7 +175,7 @@ class EngagementBot(commands.Cog):
         # Find existing pinned summary or None
         existing_summary = None
         pins = await channel.pins()
-        for message in pins:  # Now we can iterate normally
+        for message in pins:
             if message.author == self.bot.user and "RAID PERFORMANCE SUMMARY" in message.content:
                 existing_summary = message
                 break
@@ -69,11 +191,10 @@ class EngagementBot(commands.Cog):
         successful_raids = sum(1 for raid in self.raid_history if raid['success'])
         
         # Create summary message
-        summary = "```ansi\n"  # Start of code block with ANSI formatting
-        summary += "\x1b[1;36m📊 RAID PERFORMANCE SUMMARY (24h)\x1b[0m\n"  # Cyan colored header
-        summary += f"Total Raids: {total_raids} | Successful: {successful_raids} | "
+        summary = "📊 **RAID PERFORMANCE SUMMARY (24h)**\n"
+        summary += f"> Total Raids: {total_raids} | Successful: {successful_raids} | "
         summary += f"Timeouts: {total_raids - successful_raids}\n\n"
-        summary += "\x1b[1;97mRECENT RAIDS:\x1b[0m\n"  # Bright white section header
+        summary += "**RECENT RAIDS:**\n"
 
         # Add individual raid entries (most recent first)
         for raid in sorted(self.raid_history, key=lambda x: x['timestamp'], reverse=True):
@@ -84,12 +205,11 @@ class EngagementBot(commands.Cog):
                 progress_str = f" - Reached {max(raid['progress'].values()):.0f}% of targets"
                 status += progress_str if not raid['success'] else ""
             
-            summary += f"\n   🔗 <{raid['tweet_url']}>\n"
-            summary += f"   {status}\n"
-            summary += f"   ⏰ Duration: {raid['duration']:.0f} minutes\n"
-            summary += f"   🕒 {time_ago}\n"
-
-        summary += "```"  # End of code block
+            summary += f"> 🔗 <{raid['tweet_url']}>\n"
+            summary += f"> {status}\n"
+            summary += f"> ⏰ Duration: {raid['duration']:.0f} minutes\n"
+            summary += f"> 🕒 {time_ago}\n"
+            summary += "\n"
 
         # Update or create pinned message
         if existing_summary:
@@ -119,37 +239,42 @@ class EngagementBot(commands.Cog):
     async def cleanup_messages(self):
         while True:
             try:
-                # Process each channel the bot has access to
-                for channel in self.bot.get_all_channels():
-                    if isinstance(channel, discord.TextChannel):
-                        try:
-                            current_time = datetime.now(timezone.utc)
-                            async for message in channel.history(limit=None):
-                                # Skip pinned messages
-                                if message.pinned:
-                                    continue
-                                    
-                                # Calculate message age
-                                message_age = (current_time - message.created_at).total_seconds()
-                                
-                                # Bot messages: Delete if older than 8 hours
-                                if message.author.bot:
-                                    if message_age > (8 * 3600):  # 8 hours in seconds
-                                        await message.delete()
-                                        print(f"Deleted bot message")
-                                # Non-bot messages: Delete if older than 15 minutes
-                                else:
-                                    if message_age > (15 * 60):  # 15 minutes in seconds
-                                        await message.delete()
-                                        print(f"Deleted user message")
-                                        
-                                # Add a small delay to avoid rate limits
-                                await asyncio.sleep(1)
-                                
-                        except Exception as e:
-                            print(f"Error cleaning messages in channel {channel.name}: {e}")
+                if not self.raid_channel_id:
+                    await asyncio.sleep(300)  # Sleep 5 mins if no raid channel set
+                    continue
+                    
+                channel = self.bot.get_channel(self.raid_channel_id)
+                if not channel:
+                    await asyncio.sleep(300)
+                    continue
+                    
+                try:
+                    current_time = datetime.now(timezone.utc)
+                    async for message in channel.history(limit=None):
+                        # Skip pinned messages
+                        if message.pinned:
                             continue
                             
+                        # Calculate message age
+                        message_age = (current_time - message.created_at).total_seconds()
+                        
+                        # Bot messages: Delete if older than 8 hours
+                        if message.author.bot:
+                            if message_age > (8 * 3600):  # 8 hours in seconds
+                                await message.delete()
+                                print(f"Deleted bot message")
+                        # Non-bot messages: Delete if older than 15 minutes
+                        else:
+                            if message_age > (15 * 60):  # 15 minutes in seconds
+                                await message.delete()
+                                print(f"Deleted user message")
+                                
+                        # Add a small delay to avoid rate limits
+                        await asyncio.sleep(1)
+                        
+                except Exception as e:
+                    print(f"Error cleaning messages in raid channel: {e}")
+                    
                 # Run cleanup every 5 minutes
                 await asyncio.sleep(300)
                 
@@ -308,6 +433,8 @@ class EngagementBot(commands.Cog):
         • retweets - number of retweets + quotes to reach
         • bookmarks - number of bookmarks to reach
         • timeout - minutes until raid auto-ends (default: 15)"""
+        if not await self.check_raid_channel(ctx):
+            return
         print(f"raid called with url: {tweet_url} and targets: {targets}")
         
         try:
@@ -582,6 +709,8 @@ class EngagementBot(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def raid_stop(self, ctx):
         """End the current engagement challenge and unlock the channel"""
+        if not await self.check_raid_channel(ctx):
+            return
         if ctx.channel.id in self.locked_channels:
             try:
                 # Get challenge data first
