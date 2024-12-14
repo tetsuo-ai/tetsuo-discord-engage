@@ -512,7 +512,7 @@ class EngagementBot(commands.Cog):
         
         for metric, target in targets.items():
             current = metrics.get(metric, 0)
-            percentage = (current/target*100) if target > 0 else 0
+            percentage = (current/target*100) if target > 0 else 100
             progress_bar = self.create_progress_bar(current, target)
             
             status_emoji = "✅" if percentage >= 100 else "🔸" if percentage >= 75 else "🔹" if percentage >= 50 else "⭕"
@@ -560,7 +560,7 @@ class EngagementBot(commands.Cog):
                 if elapsed_minutes > timeout_minutes:
                     # Calculate progress percentages
                     progress_percentages = {
-                        metric: (metrics.get(metric, 0) / target * 100) 
+                        metric: (metrics.get(metric, 0) / target * 100) if target > 0 else 100 
                         for metric, target in targets.items()
                     }
                     
