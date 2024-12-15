@@ -10,9 +10,8 @@ echo -e "${YELLOW}Starting setup...${NC}"
 
 # Check for Python 3.11
 if ! command -v python3.11 &> /dev/null; then
-    echo -e "${RED}Python 3.11 is not installed!${NC}"
-    echo -e "${YELLOW}Installing Python 3.11 via Homebrew...${NC}"
-    brew install python@3.11
+    echo -e "${RED}Python 3.11 is required but not installed!${NC}"
+    exit 1
 fi
 
 # Remove existing venv if it exists
@@ -37,9 +36,9 @@ pip install --upgrade pip
 echo -e "${YELLOW}Installing requirements...${NC}"
 pip install -r requirements.txt
 
-# Install playwright dependencies
+# Install Playwright dependencies
 echo -e "${YELLOW}Installing Playwright dependencies...${NC}"
-playwright install --with-deps --only-shell
+sudo /home/tetsuo-engage/tetsuo-discord-engage/.venv/bin/playwright install --with-deps --only-shell
 
 echo -e "${GREEN}Setup complete! You can now run 'python main.py'${NC}"
 

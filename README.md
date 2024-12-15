@@ -1,11 +1,11 @@
 # tetsuo-discord-engage
-
+# discord.py doesn't like newer versions of python, stick with 3.11
 
 INSTALL:
 ```
  git clone https://github.com/tetsuo-ai/tetsuo-discord-engage
  cd tetsuo-discord-engage/
- python -m venv .venv
+ python3.11 -m venv .venv
  source .venv/bin/activate
  pip install -r requirements.txt
  playwright install --with-deps --only-shell
