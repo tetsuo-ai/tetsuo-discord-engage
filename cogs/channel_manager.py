@@ -34,7 +34,7 @@ class ChannelManager(commands.Cog):
                         
                         # Bot messages: Delete if older than 8 hours
                         if message.author.bot:
-                            if message_age > (8 * 3600):  # 8 hours in seconds
+                            if message_age > (15 * 60):  # 15 minutes in seconds
                                 await message.delete()
                                 print(f"Deleted bot message")
                         # Non-bot messages: Delete if older than 15 minutes
