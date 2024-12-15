@@ -299,10 +299,14 @@ class TwitterRaid(BaseRaid):
         print(f"raid called with url: {tweet_url} and targets: {targets}")
         
         try:
-            # Validate tweet URL
-            if not re.match(r'^https?://(twitter\.com|x\.com)/\w+/status/\d+$', tweet_url):
+            # Clean and validate tweet URL
+            tweet_url = re.match(r'^https?://(twitter\.com|x\.com)/\w+/status/\d+', tweet_url)
+            if not tweet_url:
                 await ctx.send("❌ Invalid tweet URL. Please provide a valid Twitter/X status URL.", delete_after=10)
                 return
+                
+            tweet_url = tweet_url.group(0).replace('x.com', 'twitter.com')  # Use clean URL
+            print(f"Cleaned URL: {tweet_url}")
 
             # Parse and validate targets
             target_dict = {}
