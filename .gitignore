@@ -2,6 +2,7 @@
 .claudeignore
 .claudesync
 .claudesync/*
+test_venv
 
 # Scratch files
 scratch
