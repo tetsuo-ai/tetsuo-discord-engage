@@ -181,6 +181,17 @@ class TwitterRaid(BaseRaid):
                 await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(5)
                 
+                # Handle the notifications popup
+                try:
+                    # Look for either the "Turn on notifications" or "Not now" button
+                    notification_button = await page.wait_for_selector('div[role="button"]:has-text("Not now")', timeout=5000)
+                    if notification_button:
+                        print("Found notifications popup, dismissing...")
+                        await notification_button.click()
+                        await asyncio.sleep(2)  # Give it a moment to dismiss
+                except Exception as e:
+                    print(f"No notifications popup or error handling it: {e}")
+                
                 metrics = {
                     'likes': 0,
                     'retweets': 0,
@@ -188,72 +199,50 @@ class TwitterRaid(BaseRaid):
                     'bookmarks': 0
                 }
 
-                metrics_group = await page.query_selector('div[role="group"]')
-                if not metrics_group:
-                    print("No metrics group found")
-                    return metrics
-                    
-                metric_containers = await metrics_group.query_selector_all('[role="link"]')
-                
-                for container in metric_containers:
-                    try:
-                        number_element = await container.query_selector('[data-testid="app-text-transition-container"]')
-                        if not number_element:
-                            continue
+                try:
+                    metrics_group = await page.query_selector('div[role="group"][aria-label*="replies"]')
+                    if not metrics_group:
+                        print("No metrics group found")
+                        return metrics
+                        
+                    # Find all buttons with data-testid attributes and their text content
+                    for button_type in ['like', 'retweet', 'reply', 'bookmark']:
+                        try:
+                            button = await page.query_selector(f'button[data-testid="{button_type}"]')
+                            if not button:
+                                print(f"No {button_type} button found")
+                                continue
+
+                            text = await button.evaluate('el => el.textContent')
+                            if not text.strip():
+                                print(f"Empty {button_type} count text")
+                                continue
+                            print(f"Found {button_type} count: {text}")
                             
-                        number_text = await number_element.inner_text()
-                        
-                        text = number_text.strip().upper()
-                        try:
-                            multiplier = 1
-                            if text.endswith('K'):
-                                multiplier = 1000
-                                text = text[:-1]
-                            elif text.endswith('M'):
-                                multiplier = 1000000
-                                text = text[:-1]
+                            # Clean and parse the number
+                            try:
+                                text = text.strip().replace(',', '')
+                                if 'K' in text.upper():
+                                    number = float(text.upper().replace('K', '')) * 1000
+                                elif 'M' in text.upper():
+                                    number = float(text.upper().replace('M', '')) * 1000000
+                                else:
+                                    number = float(text)
+                                    
+                                if button_type == 'reply':
+                                    metrics['replies'] = int(number)
+                                else:
+                                    metrics[f"{button_type}s"] = int(number)
+                            except (ValueError, TypeError) as e:
+                                print(f"Could not parse {button_type} count: {text} - Error: {e}")
                                 
-                            number = float(text.replace(',', ''))
-                            number = int(number * multiplier)
-                        except (ValueError, TypeError):
-                            number = 0
-                        
-                        href = await container.get_attribute('href') or ''
-                        
-                        if href:
-                            print(f"Found metric - {href}: {number_text}")
-                            if '/likes' in href:
-                                metrics['likes'] = number
-                            elif '/retweets' in href and 'with_comments' not in href:
-                                metrics['retweets'] = number
-                            elif '/with_comments' in href:
-                                metrics['retweets'] += number
-                        
-                    except Exception as e:
-                        print(f"Error processing metric element: {e}")
-                        continue
-
-                bookmark_container = await metrics_group.query_selector('div[dir="ltr"]:not([role="link"])')
-                if bookmark_container:
-                    number_element = await bookmark_container.query_selector('[data-testid="app-text-transition-container"]')
-                    if number_element:
-                        number_text = await number_element.inner_text()
-                        text = number_text.strip().upper()
-                        try:
-                            multiplier = 1
-                            if text.endswith('K'):
-                                multiplier = 1000
-                                text = text[:-1]
-                            elif text.endswith('M'):
-                                multiplier = 1000000
-                                text = text[:-1]
-                                
-                            metrics['bookmarks'] = int(float(text.replace(',', '')) * multiplier)
-                            print(f"Found metric - bookmarks: {number_text}")
-                        except (ValueError, TypeError):
-                            metrics['bookmarks'] = 0
-
-                print(f"Final extracted metrics: {metrics}")
+                        except Exception as e:
+                            print(f"Error processing {button_type} metric: {e}")
+                            continue  # Move to next metric on error
+                            
+                except Exception as e:
+                    print(f"Error during metrics extraction: {e}")
+                    
                 return metrics
                     
             except Exception as e:
@@ -287,11 +276,12 @@ class TwitterRaid(BaseRaid):
         """Start a X/Twitter engagement challenge
 
         Usage: !raid <tweet_url> <targets>
-        Example: !raid https://twitter.com/user/123 likes:100 retweets:50 timeout:120
+        Example: !raid https://twitter.com/user/123 likes:100 retweets:50 replies:25 timeout:120
         
         Available targets:
         • likes - number of likes to reach
         • retweets - number of retweets + quotes to reach
+        • replies - number of replies to reach
         • bookmarks - number of bookmarks to reach
         • timeout - minutes until raid auto-ends (default: 15)"""
         if not await self.check_raid_channel(ctx):
@@ -313,7 +303,7 @@ class TwitterRaid(BaseRaid):
             timeout_minutes = 15  # Default timeout
             
             # Split on whitespace but ignore malformed input
-            valid_metrics = {'likes', 'retweets', 'bookmarks', 'timeout'}
+            valid_metrics = {'likes', 'retweets', 'bookmarks', 'replies', 'timeout'}
             for pair in targets.split():
                 try:
                     if ':' not in pair:

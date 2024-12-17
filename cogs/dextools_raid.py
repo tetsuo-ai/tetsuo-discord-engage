@@ -6,11 +6,11 @@ import os
 import asyncio
 from playwright.async_api import async_playwright
 
-class GeckoRaid(BaseRaid):
+class DextoolsRaid(BaseRaid):
     def __init__(self, bot):
         super().__init__(bot)
         self.browser = None
-        self.target_url = "https://www.geckoterminal.com/solana/pools/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6"
+        self.target_url = "https://www.dextools.io/app/en/solana/pair-explorer/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6?t=1734332435607"
         self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
 
     async def setup_playwright(self):
@@ -22,13 +22,13 @@ class GeckoRaid(BaseRaid):
                     headless=True,
                     args=['--no-sandbox', '--disable-setuid-sandbox']
                 )
-                print("Gecko Raid: Playwright browser initialized successfully")
+                print("Dextools Raid: Playwright browser initialized successfully")
             except Exception as e:
                 print(f"Error initializing Playwright: {e}")
                 raise e
 
     async def get_metrics(self):
-        """Get current sentiment percentage from GeckoTerminal"""
+        """Get current sentiment percentage from Dextools"""
         if not self.browser:
             await self.setup_playwright()
 
@@ -41,42 +41,25 @@ class GeckoRaid(BaseRaid):
             await page.set_viewport_size({"width": 1280, "height": 800})
 
             try:
-                print("Loading Gecko metrics")
+                print("Loading Dextools metrics")
                 await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(5)
+                await asyncio.sleep(5)  # Give the SPA time to hydrate
                 
-                print("Page loaded, searching for sentiment...")
+                # Target the sentiment percentage span directly
+                percent_element = await page.query_selector('span.percent.buy-color')
+                if percent_element:
+                    text = await percent_element.text_content()
+                    print(f"Found percentage text: {text}")
+                    try:
+                        # Strip the % and whitespace, convert to float
+                        value = float(text.strip().rstrip('%'))
+                        print(f"Successfully parsed value: {value}%")
+                        return value
+                    except ValueError:
+                        print(f"Could not convert '{text}' to float")
+                else:
+                    print("Could not find sentiment percentage element")
                 
-                # Find sentiment section by looking for the question text
-                text_element = await page.query_selector("text='How do you feel about TETSUO/SOL today?'")
-                if text_element:
-                    print("Found sentiment question text")
-                    
-                    # Get the sentiment div with the width style
-                    percent_element = await page.query_selector("div.bg-buy[style*='width']")
-                    if percent_element:
-                        # Try getting percentage from text first
-                        text = await percent_element.inner_text()
-                        if text.strip():
-                            try:
-                                value = float(text.strip('%'))
-                                print(f"Found sentiment from text: {value}%")
-                                return value
-                            except ValueError:
-                                pass
-                        
-                        # If text is empty or invalid, get it from the width style
-                        width_style = await percent_element.get_attribute('style')
-                        if width_style:
-                            try:
-                                width_value = width_style.split('width:')[1].split('%')[0].strip()
-                                value = float(width_value)
-                                print(f"Found sentiment from width: {value}%")
-                                return value
-                            except:
-                                print("Could not extract percentage from width style")
-
-                print("Could not find sentiment percentage")
                 return 0
                     
             except Exception as e:
@@ -95,9 +78,9 @@ class GeckoRaid(BaseRaid):
             return 0
     
     async def create_progress_embed(self, current_value, target_value):
-        """Create progress embed for Gecko raids"""
+        """Create progress embed for Dextools raids"""
         embed = discord.Embed(
-            title="🦎 GeckoTerminal Sentiment Challenge",
+            title="🦎 Dextools Sentiment Challenge",
             description="Help boost the positive sentiment rating!",
             color=0x00FF00
         )
@@ -195,13 +178,13 @@ class GeckoRaid(BaseRaid):
             
             await asyncio.sleep(30)
 
-    @commands.command(name='raid_gecko')
+    @commands.command(name='raid_dextools')
     @commands.has_permissions(manage_channels=True)
-    async def raid_gecko(self, ctx, *, targets):
-        """Start a GeckoTerminal sentiment raid
+    async def raid_dextools(self, ctx, *, targets):
+        """Start a Dextools sentiment raid
         
-        Usage: !raid_gecko sentiment:<target> [timeout:<minutes>]
-        Example: !raid_gecko sentiment:85 timeout:30"""
+        Usage: !raid_dextools sentiment:<target> [timeout:<minutes>]
+        Example: !raid_dextools sentiment:85 timeout:30"""
         
         if not await self.check_raid_channel(ctx):
             return
@@ -246,7 +229,7 @@ class GeckoRaid(BaseRaid):
             await self.monitor_raid(ctx, target_value, timeout_minutes)
             
         except Exception as e:
-            print(f"Error in raid_gecko: {e}")
+            print(f"Error in raid_dextools: {e}")
             await ctx.send(f"Error: {str(e)}")
             await self.unlock_channel(ctx.channel)
 
@@ -255,4 +238,4 @@ class GeckoRaid(BaseRaid):
             asyncio.create_task(self.browser.close())
 
 async def setup(bot):
-    await bot.add_cog(GeckoRaid(bot))
+    await bot.add_cog(DextoolsRaid(bot))

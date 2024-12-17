@@ -9,17 +9,25 @@ class ChannelManager(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
+        self.last_metrics_update = None
+        self.metrics_message_id = None
+        self.previous_metrics = {
+            'cmc_likes': None,
+            'gecko_sentiment': None
+        }
+        self.cleanup_task = None
+        self.metrics_task = None
 
     async def cleanup_messages(self):
         while True:
             try:
                 if not self.raid_channel_id:
-                    await asyncio.sleep(300)  # Sleep 5 mins if no raid channel set
+                    await asyncio.sleep(30)
                     continue
                     
                 channel = self.bot.get_channel(self.raid_channel_id)
                 if not channel:
-                    await asyncio.sleep(300)
+                    await asyncio.sleep(30)
                     continue
                     
                 try:
@@ -50,20 +58,190 @@ class ChannelManager(commands.Cog):
                     print(f"Error cleaning messages in raid channel: {e}")
                     
                 # Run cleanup every 5 minutes
-                await asyncio.sleep(300)
+                await asyncio.sleep(30)
                 
             except Exception as e:
                 print(f"Error in cleanup task: {e}")
                 await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
 
+    def get_trend_indicator(self, current, previous):
+        if previous is None:
+            return "➖"  # First reading
+        elif current > previous:
+            return "↗️"  # Increasing
+        elif current < previous:
+            return "↘️"  # Decreasing
+        else:
+            return "➖"  # No change
+        
+    async def update_metrics_dashboard(self):
+        while True:
+            try:
+                if not self.raid_channel_id:
+                    await asyncio.sleep(300)
+                    continue
+
+                channel = self.bot.get_channel(self.raid_channel_id)
+                if not channel:
+                    await asyncio.sleep(300)
+                    continue
+
+                # Get our raid cogs
+                cmc_raid = self.bot.get_cog('CMCRaid')
+                gecko_raid = self.bot.get_cog('GeckoRaid')
+                gmgn_raid = self.bot.get_cog('GmgnRaid')
+                dextools_raid = self.bot.get_cog('DextoolsRaid')
+
+                if not cmc_raid or not gecko_raid or not gmgn_raid or not dextools_raid:
+                    await asyncio.sleep(300)
+                    continue
+
+                # Fetch metrics
+                cmc_likes = await cmc_raid.get_metrics()
+                gecko_sentiment = await gecko_raid.get_metrics()
+                gmgn_sentiment = await gmgn_raid.get_metrics()
+                dextools_sentiment = await dextools_raid.get_metrics()
+
+                # Get trend indicators
+                cmc_trend = self.get_trend_indicator(cmc_likes, self.previous_metrics['cmc_likes'])
+                gecko_trend = self.get_trend_indicator(gecko_sentiment, self.previous_metrics['gecko_sentiment'])
+                gmgn_trend = self.get_trend_indicator(gmgn_sentiment, self.previous_metrics.get('gmgn_sentiment'))
+                dextools_trend = self.get_trend_indicator(dextools_sentiment, self.previous_metrics.get('dextools_sentiment'))
+
+                # Store current values as previous for next update
+                self.previous_metrics['cmc_likes'] = cmc_likes
+                self.previous_metrics['gecko_sentiment'] = gecko_sentiment
+                self.previous_metrics['gmgn_sentiment'] = gmgn_sentiment
+                self.previous_metrics['dextools_sentiment'] = dextools_sentiment
+
+                # Create metrics embed
+                embed = discord.Embed(
+                    title="📊 **LIVE SENTIMENT METRICS**",
+                    color=0x1DA1F2,
+                    timestamp=datetime.now(timezone.utc)
+                )
+
+                # Add fields with metrics AND LINKS!
+                embed.add_field(
+                    name="**CoinMarketCap**",
+                    value=(
+                        f"Upvotes: **{cmc_likes}** {cmc_trend}\n"
+                        "[View/Vote](https://coinmarketcap.com/dexscan/solana/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6)"
+                    ),
+                    inline=False
+                )
+
+                # Add separator
+                embed.add_field(name="\u200b", value="\u200b", inline=False)
+                embed.add_field(
+                    name="**GeckoTerminal**",
+                    value=(
+                        f"Sentiment: **{gecko_sentiment:.1f}%** {gecko_trend}\n"
+                        "[View/Vote](https://www.geckoterminal.com/solana/pools/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6)"
+                    ),
+                    inline=False
+                )
+
+                # Add separator
+                embed.add_field(name="\u200b", value="\u200b", inline=False)
+                embed.add_field(
+                    name="**GMGN.ai**",
+                    value=(
+                        f"Sentiment: **{gmgn_sentiment:.1f}%** {gmgn_trend}\n"
+                        "[View/Vote](https://gmgn.ai/sol/token/8i51XNNpGaKaj4G4nDdmQh95v4FKAxw8mhtaRoKd9tE8)"
+                    ),
+                    inline=False
+                )
+
+                # Add separator and Dextools
+                embed.add_field(name="\u200b", value="\u200b", inline=False)
+                embed.add_field(
+                    name="**Dextools**",
+                    value=(
+                        f"Sentiment: **{dextools_sentiment:.1f}%** {dextools_trend}\n"
+                        "[View/Vote](https://www.dextools.io/app/en/solana/pair-explorer/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6)"
+                    ),
+                    inline=False
+                )
+
+                if self.previous_metrics['cmc_likes'] is not None:
+                    changes = []
+                    cmc_change = cmc_likes - self.previous_metrics['cmc_likes']
+                    gecko_change = gecko_sentiment - self.previous_metrics['gecko_sentiment']
+                    gmgn_change = gmgn_sentiment - self.previous_metrics['gmgn_sentiment']
+                    dextools_change = dextools_sentiment - self.previous_metrics['dextools_sentiment']
+                    
+                    if cmc_change != 0:
+                        changes.append(f"CMC: {'+'if cmc_change>0 else ''}{cmc_change} votes")
+                    if gecko_change != 0:
+                        changes.append(f"Gecko: {'+'if gecko_change>0 else ''}{gecko_change:.1f}%")
+                    if gmgn_change != 0:
+                        changes.append(f"GMGN: {'+'if gmgn_change>0 else ''}{gmgn_change:.1f}%")
+                    if dextools_change != 0:
+                        changes.append(f"Dextools: {'+'if dextools_change>0 else ''}{dextools_change:.1f}%")
+                    
+                    if changes:
+                        embed.add_field(
+                            name="Changes (5m)",
+                            value="\n".join(changes),
+                            inline=False
+                        )
+
+                embed.set_footer(text="Last updated")
+
+                # Find and update existing metrics message
+                if not self.metrics_message_id:
+                    # Look for existing metrics message in pins
+                    pins = await channel.pins()
+                    for pin in pins:
+                        if (pin.author == self.bot.user and 
+                            pin.embeds and 
+                            "📊 **LIVE SENTIMENT METRICS**" in pin.embeds[0].title):
+                            self.metrics_message_id = pin.id
+                            break
+
+                try:
+                    if self.metrics_message_id:
+                        # Try to update existing message
+                        message = await channel.fetch_message(self.metrics_message_id)
+                        await message.edit(embed=embed)
+                    else:
+                        # Create new message if none exists
+                        message = await channel.send(embed=embed)
+                        await message.pin()
+                        self.metrics_message_id = message.id
+                except discord.NotFound:
+                    # Message was deleted, create new one
+                    message = await channel.send(embed=embed)
+                    await message.pin()
+                    self.metrics_message_id = message.id
+                except Exception as e:
+                    print(f"Error updating metrics message: {e}")
+                    self.metrics_message_id = None  # Reset ID on error
+
+            except Exception as e:
+                print(f"Error in metrics dashboard task: {e}")
+
+            # Update every 5 minutes
+            await asyncio.sleep(300)
+
     @commands.Cog.listener()
     async def on_ready(self):
         print('ChannelManager is ready')
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
+        if self.metrics_task:
+            self.metrics_task.cancel()
+            
         self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
+        self.metrics_task = self.bot.loop.create_task(self.update_metrics_dashboard())
+        print('ChannelManager tasks started')
 
     def cog_unload(self):
         if self.cleanup_task:
             self.cleanup_task.cancel()
+        if self.metrics_task:
+            self.metrics_task.cancel()
 
     async def check_raid_channel(self, ctx):
         """Check if the command is being used in the designated raid channel"""
@@ -157,6 +335,9 @@ class ChannelManager(commands.Cog):
         # Get the active raids from both raid cogs
         twitter_raid = self.bot.get_cog('TwitterRaid')
         cmc_raid = self.bot.get_cog('CMCRaid')
+        gecko_raid = self.bot.get_cog('GeckoRaid')
+        gmgn_raid = self.bot.get_cog('GmgnRaid')
+        dextools_raid = self.bot.get_cog('DextoolsRaid')
         
         channel_locked = False
         
@@ -221,6 +402,93 @@ class ChannelManager(commands.Cog):
                 
             except Exception as e:
                 print(f"Error in raid_stop (CMC): {e}")
+
+        # Add Gecko check
+        if gecko_raid and ctx.channel.id in gecko_raid.locked_channels:
+            try:
+                challenge_data = gecko_raid.engagement_targets.get(ctx.channel.id)
+                if challenge_data:
+                    try:
+                        lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
+                        if lock_message:
+                            await lock_message.delete()
+                    except discord.NotFound:
+                        print("Lock message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting lock message: {e}")
+                        
+                    try:
+                        progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
+                        if progress_message:
+                            await progress_message.delete()
+                    except discord.NotFound:
+                        print("Progress message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting progress message: {e}")
+
+                await gecko_raid.unlock_channel(ctx.channel)
+                channel_locked = True
+                
+            except Exception as e:
+                print(f"Error in raid_stop (Gecko): {e}")
+
+        # Add GMGN check
+        if gmgn_raid and ctx.channel.id in gmgn_raid.locked_channels:
+            try:
+                challenge_data = gmgn_raid.engagement_targets.get(ctx.channel.id)
+                if challenge_data:
+                    try:
+                        lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
+                        if lock_message:
+                            await lock_message.delete()
+                    except discord.NotFound:
+                        print("Lock message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting lock message: {e}")
+                        
+                    try:
+                        progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
+                        if progress_message:
+                            await progress_message.delete()
+                    except discord.NotFound:
+                        print("Progress message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting progress message: {e}")
+
+                await gmgn_raid.unlock_channel(ctx.channel)
+                channel_locked = True
+                
+            except Exception as e:
+                print(f"Error in raid_stop (GMGN): {e}")
+
+        # Add Dextools check
+        if dextools_raid and ctx.channel.id in dextools_raid.locked_channels:
+            try:
+                challenge_data = dextools_raid.engagement_targets.get(ctx.channel.id)
+                if challenge_data:
+                    try:
+                        lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
+                        if lock_message:
+                            await lock_message.delete()
+                    except discord.NotFound:
+                        print("Lock message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting lock message: {e}")
+                        
+                    try:
+                        progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
+                        if progress_message:
+                            await progress_message.delete()
+                    except discord.NotFound:
+                        print("Progress message already deleted")
+                    except Exception as e:
+                        print(f"Error deleting progress message: {e}")
+
+                await dextools_raid.unlock_channel(ctx.channel)
+                channel_locked = True
+                
+            except Exception as e:
+                print(f"Error in raid_stop (Dextools): {e}")
 
         if channel_locked:
             await ctx.send("Challenge ended manually. Channel unlocked!", delete_after=5)

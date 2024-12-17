@@ -60,6 +60,14 @@ async def main():
         print("Loading Gecko raid extension...")
         await bot.load_extension('cogs.gecko_raid')
         print("Gecko raid loaded successfully!")
+
+        print("Loading GMGN raid extension...")
+        await bot.load_extension('cogs.gmgn_raid')
+        print("GMGN raid loaded successfully!")
+
+        print("Loading Dextools raid extension...")
+        await bot.load_extension('cogs.dextools_raid')
+        print("Dextools raid loaded successfully!")
         
     except Exception as e:
         print(f"Failed to load extension: {e}")

@@ -6,11 +6,11 @@ import os
 import asyncio
 from playwright.async_api import async_playwright
 
-class GeckoRaid(BaseRaid):
+class GmgnRaid(BaseRaid):
     def __init__(self, bot):
         super().__init__(bot)
         self.browser = None
-        self.target_url = "https://www.geckoterminal.com/solana/pools/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6"
+        self.target_url = "https://gmgn.ai/sol/token/8i51XNNpGaKaj4G4nDdmQh95v4FKAxw8mhtaRoKd9tE8"
         self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
 
     async def setup_playwright(self):
@@ -22,13 +22,13 @@ class GeckoRaid(BaseRaid):
                     headless=True,
                     args=['--no-sandbox', '--disable-setuid-sandbox']
                 )
-                print("Gecko Raid: Playwright browser initialized successfully")
+                print("GMGN.ai Raid: Playwright browser initialized successfully")
             except Exception as e:
                 print(f"Error initializing Playwright: {e}")
                 raise e
 
     async def get_metrics(self):
-        """Get current sentiment percentage from GeckoTerminal"""
+        """Get current sentiment percentage from GMGN.ai"""
         if not self.browser:
             await self.setup_playwright()
 
@@ -41,42 +41,61 @@ class GeckoRaid(BaseRaid):
             await page.set_viewport_size({"width": 1280, "height": 800})
 
             try:
-                print("Loading Gecko metrics")
+                print("Loading GMGN.ai metrics")
                 await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
                 
-                print("Page loaded, searching for sentiment...")
+                # Handle the "Got it" popup
+                try:
+                    got_it_button = await page.wait_for_selector('text="Got it"', timeout=10000)
+                    if got_it_button:
+                        print("Found Got it button, clicking...")
+                        await got_it_button.click()
+                        await asyncio.sleep(2)
+                except Exception as e:
+                    print(f"No Got it button found or error clicking it: {e}")
                 
-                # Find sentiment section by looking for the question text
-                text_element = await page.query_selector("text='How do you feel about TETSUO/SOL today?'")
-                if text_element:
-                    print("Found sentiment question text")
+                print("\nBeginning vote percentage search...")
+                
+                # First check if we can find the image
+                vote_img = await page.query_selector('img[src="/static/vote/vote2.png"]')
+                if vote_img:
+                    print("✓ Found vote2.png image")
                     
-                    # Get the sentiment div with the width style
-                    percent_element = await page.query_selector("div.bg-buy[style*='width']")
-                    if percent_element:
-                        # Try getting percentage from text first
-                        text = await percent_element.inner_text()
-                        if text.strip():
-                            try:
-                                value = float(text.strip('%'))
-                                print(f"Found sentiment from text: {value}%")
-                                return value
-                            except ValueError:
-                                pass
+                    # Get image's parent element
+                    parent = await vote_img.evaluate('node => node.parentElement')
+                    if parent:
+                        print("✓ Found image parent element")
+                    else:
+                        print("✗ Could not find image parent element")
+                    
+                    # Try to find the percentage div
+                    text_elements = await page.query_selector('div:has(img[src="/static/vote/vote2.png"]) + div')
+                    if text_elements:
+                        print("✓ Found div after image")
+                        text = await text_elements.text_content()
+                        print(f"Text content found: '{text}'")
+                        try:
+                            value = float(text.strip('%'))
+                            print(f"✓ Successfully parsed value: {value}%")
+                            return value
+                        except ValueError:
+                            print(f"✗ Could not convert '{text}' to float")
+                    else:
+                        print("✗ Could not find div after image")
                         
-                        # If text is empty or invalid, get it from the width style
-                        width_style = await percent_element.get_attribute('style')
-                        if width_style:
-                            try:
-                                width_value = width_style.split('width:')[1].split('%')[0].strip()
-                                value = float(width_value)
-                                print(f"Found sentiment from width: {value}%")
-                                return value
-                            except:
-                                print("Could not extract percentage from width style")
+                    # Let's also log nearby elements to see the structure
+                    nearby = await page.evaluate('''() => {
+                        const img = document.querySelector('img[src="/static/vote/vote2.png"]');
+                        if (!img) return 'No image found';
+                        return img.parentElement.parentElement.innerHTML;
+                    }''')
+                    print("\nNearby HTML structure:")
+                    print(nearby)
+                else:
+                    print("✗ Could not find vote2.png image at all")
 
-                print("Could not find sentiment percentage")
+                print("Could not find vote percentage")
                 return 0
                     
             except Exception as e:
@@ -95,9 +114,9 @@ class GeckoRaid(BaseRaid):
             return 0
     
     async def create_progress_embed(self, current_value, target_value):
-        """Create progress embed for Gecko raids"""
+        """Create progress embed for GMGN.ai raids"""
         embed = discord.Embed(
-            title="🦎 GeckoTerminal Sentiment Challenge",
+            title="🦎 GMGN.ai Sentiment Challenge",
             description="Help boost the positive sentiment rating!",
             color=0x00FF00
         )
@@ -195,13 +214,13 @@ class GeckoRaid(BaseRaid):
             
             await asyncio.sleep(30)
 
-    @commands.command(name='raid_gecko')
+    @commands.command(name='raid_gmgn')
     @commands.has_permissions(manage_channels=True)
-    async def raid_gecko(self, ctx, *, targets):
-        """Start a GeckoTerminal sentiment raid
+    async def raid_gmgn(self, ctx, *, targets):
+        """Start a GMGN.ai sentiment raid
         
-        Usage: !raid_gecko sentiment:<target> [timeout:<minutes>]
-        Example: !raid_gecko sentiment:85 timeout:30"""
+        Usage: !raid_gmgn sentiment:<target> [timeout:<minutes>]
+        Example: !raid_gmgn sentiment:85 timeout:30"""
         
         if not await self.check_raid_channel(ctx):
             return
@@ -246,7 +265,7 @@ class GeckoRaid(BaseRaid):
             await self.monitor_raid(ctx, target_value, timeout_minutes)
             
         except Exception as e:
-            print(f"Error in raid_gecko: {e}")
+            print(f"Error in raid_gmgn: {e}")
             await ctx.send(f"Error: {str(e)}")
             await self.unlock_channel(ctx.channel)
 
@@ -255,4 +274,4 @@ class GeckoRaid(BaseRaid):
             asyncio.create_task(self.browser.close())
 
 async def setup(bot):
-    await bot.add_cog(GeckoRaid(bot))
+    await bot.add_cog(GmgnRaid(bot))
