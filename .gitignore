@@ -10,7 +10,7 @@ raid_history.json
 xtest.py
 xtest.sh
 processed_transactions.txt
-
+localsetup.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
