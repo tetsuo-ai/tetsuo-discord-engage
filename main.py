@@ -68,6 +68,10 @@ async def main():
         print("Loading Dextools raid extension...")
         await bot.load_extension('cogs.dextools_raid')
         print("Dextools raid loaded successfully!")
+
+        print("Loading Whale Watcher extension...")
+        await bot.load_extension('cogs.whale_watcher')
+        print("Whale Watcher loaded successfully!")
         
     except Exception as e:
         print(f"Failed to load extension: {e}")
