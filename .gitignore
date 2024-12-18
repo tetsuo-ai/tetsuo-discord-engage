@@ -7,6 +7,10 @@ test_venv
 # Scratch files
 scratch
 raid_history.json
+xtest.py
+xtest.sh
+processed_transactions.txt
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
