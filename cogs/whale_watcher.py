@@ -151,27 +151,27 @@ class WhaleMonitor(commands.Cog):
         
         # Create excitement level based on size
         if usd_value >= 50000:
-            title = "<:tetsuorage:1318799120105865317> ABSOLUTELY MASSIVE WHALE ALERT! <:tetsuorage:1318799120105865317>"
+            title = "<:tetsuorage:1317642220228050996> ABSOLUTELY MASSIVE WHALE ALERT! <:tetsuorage:1317642220228050996>"
             excitement = "HOLY MOTHER OF ALL WHALES!"
         elif usd_value >= 20000:
-            title = "<:tetsuoblueeyes:1318799118407307276> HUGE Whale Alert! <:tetsuoblueeyes:1318799118407307276>"
+            title = "<:tetsuoblueeyes:1317213296696229919> HUGE Whale Alert! <:tetsuoblueeyes:1317213296696229919>"
             excitement = "Now that's what I call a splash!"
         elif usd_value >= 5000:
-            title = "<:ascii_dark:1318795848762523739> Big Whale Alert! <:ascii_dark:1318795848762523739>"
+            title = "<:ascii_dark:1318128794011439186> Big Whale Alert! <:ascii_dark:1318128794011439186>"
             excitement = "Making waves!"
         elif usd_value >= 2000:
-            title = "<:ascii:1318795865267372042> Whale Alert! <:ascii:1318795865267372042>"
+            title = "<:ascii:1318128806158012446> Whale Alert! <:ascii:1318128806158012446>"
             excitement = "Nice buy!"
         else:
-            title = "<:ascii:1318795865267372042> Baby Whale Alert <:ascii:1318795865267372042>"
+            title = "<:ascii:1318128806158012446> Baby Whale Alert <:ascii:1318128806158012446>"
             excitement = "Every whale starts somewhere!"
 
         # Create our emoji tsunami (cycle through all custom emojis)
         emojis = [
-            '<:ascii:1318795865267372042>', 
-            '<:ascii_dark:1318795848762523739>', 
-            '<:tetsuorage:1318799120105865317>', 
-            '<:tetsuoblueeyes:1318799118407307276>'
+            '<:ascii:1318128806158012446>', 
+            '<:ascii_dark:1318128794011439186>', 
+            '<:tetsuorage:1317642220228050996>', 
+            '<:tetsuoblueeyes:1317213296696229919>'
         ]
         emoji_wall = ''.join(emojis[i % len(emojis)] for i in range(emoji_count))
 
