@@ -13,6 +13,7 @@ class WhaleMonitor(commands.Cog):
         self.pool_address = "2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6"
         self.min_usd_threshold = 1000
         self.monitor_task = None
+        self.cleanup_task = None
         self.alert_channel_id = int(os.getenv('WHALE_ALERT_CHANNEL', 0))
         self.headers = {
             'accept': 'application/json;version=20230302',
@@ -22,7 +23,65 @@ class WhaleMonitor(commands.Cog):
         self.seen_transactions = {}
         self.bot_start_time = None
 
-    # In the WhaleMonitor class, replace the start_monitoring method:
+    async def cleanup_messages(self):
+        """Keep only the most recent 200 messages in the whale alert channel"""
+        while True:
+            try:
+                # Explicitly check if we have a designated channel
+                if not self.alert_channel_id:
+                    await asyncio.sleep(60)
+                    continue
+                    
+                channel = self.bot.get_channel(self.alert_channel_id)
+                if not channel:
+                    await asyncio.sleep(60)
+                    continue
+
+                # Double-check we're in the right channel before doing any cleanup
+                if not isinstance(channel, discord.TextChannel):
+                    print("Whale alert channel is not a text channel")
+                    await asyncio.sleep(60)
+                    continue
+
+                # Get messages only from the designated channel
+                messages = []
+                async for message in channel.history(limit=None):
+                    if message.channel.id != self.alert_channel_id:
+                        continue
+                        
+                    # Skip pinned messages
+                    if message.pinned:
+                        continue
+                    messages.append(message)
+                
+                # If we have more than 200 messages, delete the oldest ones
+                if len(messages) > 200:
+                    # Sort by timestamp, newest first
+                    messages.sort(key=lambda x: x.created_at, reverse=True)
+                    
+                    # Delete messages after the first 200
+                    deleted_count = 0
+                    for message in messages[200:]:
+                        try:
+                            # One final channel check before deletion
+                            if message.channel.id == self.alert_channel_id:
+                                await message.delete()
+                                deleted_count += 1
+                                # Small delay to avoid rate limits
+                                await asyncio.sleep(1)
+                        except Exception as e:
+                            print(f"Error deleting message in whale channel: {e}")
+                            continue
+                    
+                    if deleted_count > 0:
+                        print(f"Cleaned up {deleted_count} messages from whale alert channel")
+                
+                # Run cleanup every 5 minutes
+                await asyncio.sleep(300)
+                    
+            except Exception as e:
+                print(f"Error in whale channel cleanup: {e}")
+                await asyncio.sleep(60)
 
     async def start_monitoring(self):
         """Monitor trades with proper rate limiting"""
@@ -61,7 +120,6 @@ class WhaleMonitor(commands.Cog):
                     'trade_volume_in_usd_greater_than': self.min_usd_threshold
                 }
 
-                print("Checking for new trades...")
                 request_times.append(current_time)
 
                 async with self.session.get(self.api_url, params=params) as response:
@@ -77,7 +135,6 @@ class WhaleMonitor(commands.Cog):
                         continue
 
                     data = await response.json()
-                    print(f"Received {len(data.get('data', []))} trades")
                     await self.process_trades(data)
 
                 # Fixed 2-second interval between requests
@@ -188,9 +245,6 @@ class WhaleMonitor(commands.Cog):
             timestamp=trade_time
         )
         
-        # Add the GIF to the embed
-        embed.set_thumbnail(url=gif_url)  # For smaller GIF in corner
-        # OR
         embed.set_image(url=gif_url)  # For full-width GIF
 
         # Keep all values on one line
@@ -323,11 +377,16 @@ class WhaleMonitor(commands.Cog):
         if not self.monitor_task:
             self.monitor_task = self.bot.loop.create_task(self.start_monitoring())
             print("Whale Monitor: Started monitoring buys")
+        if not self.cleanup_task:
+            self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
+            print("Whale Monitor: Started channel cleanup task")
 
     def cog_unload(self):
         """Cleanup when cog is unloaded"""
         if self.monitor_task:
             self.monitor_task.cancel()
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
         if self.session and not self.session.closed:
             asyncio.create_task(self.session.close())
 
