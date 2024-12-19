@@ -22,6 +22,8 @@ class WhaleMonitor(commands.Cog):
         self.seen_transactions = {}
         self.bot_start_time = None
 
+    # In the WhaleMonitor class, replace the start_monitoring method:
+
     async def start_monitoring(self):
         """Monitor trades with proper rate limiting"""
         if not self.session:
@@ -32,10 +34,27 @@ class WhaleMonitor(commands.Cog):
             self.bot_start_time = datetime.now(timezone.utc)
             print(f"Whale Monitor: Initialized at {self.bot_start_time}")
 
+        # Track our API calls
+        request_times = []
+        
         while True:
             try:
                 if not self.alert_channel_id:
                     await asyncio.sleep(30)
+                    continue
+
+                # Clean up old request timestamps
+                current_time = datetime.now(timezone.utc)
+                request_times = [t for t in request_times 
+                            if (current_time - t).total_seconds() < 60]
+
+                # Check if we're about to exceed rate limit
+                if len(request_times) >= 30:
+                    # Wait until oldest request is more than 60s old
+                    wait_time = 60 - (current_time - request_times[0]).total_seconds()
+                    if wait_time > 0:
+                        print(f"Rate limit approaching, waiting {wait_time:.1f}s")
+                        await asyncio.sleep(wait_time)
                     continue
 
                 params = {
@@ -43,6 +62,7 @@ class WhaleMonitor(commands.Cog):
                 }
 
                 print("Checking for new trades...")
+                request_times.append(current_time)
 
                 async with self.session.get(self.api_url, params=params) as response:
                     if response.status == 429:  # Rate limit
@@ -60,17 +80,8 @@ class WhaleMonitor(commands.Cog):
                     print(f"Received {len(data.get('data', []))} trades")
                     await self.process_trades(data)
 
-                    # Get and log cache control info
-                    cache_control = response.headers.get('cache-control', '')
-                    print(f"Cache-Control header: {cache_control}")
-                    
-                    if 'max-age=' in cache_control:
-                        max_age = int(cache_control.split('max-age=')[1].split(',')[0])
-                        print(f"Waiting {max_age} seconds based on cache control")
-                        await asyncio.sleep(max_age)
-                    else:
-                        print("No cache control, using 15s default interval")
-                        await asyncio.sleep(15)
+                # Fixed 2-second interval between requests
+                await asyncio.sleep(2)
 
             except aiohttp.ClientError as e:
                 print(f"Connection error: {e}")
@@ -119,7 +130,8 @@ class WhaleMonitor(commands.Cog):
                     usd_value=usd_value,
                     price_usd=float(attrs['price_to_in_usd']),
                     amount_tokens=float(attrs['to_token_amount']),
-                    price_impact=0
+                    price_impact=0,
+                    trade_time=trade_time  # Add timestamp to the call
                 )
 
             except Exception as e:
@@ -132,8 +144,8 @@ class WhaleMonitor(commands.Cog):
             for hash, time in self.seen_transactions.items()
             if (current_time - time).total_seconds() < 3600
         }
-
-    async def send_whale_alert(self, transaction, usd_value, price_usd, amount_tokens, price_impact):
+    
+    async def send_whale_alert(self, transaction, usd_value, price_usd, amount_tokens, price_impact, trade_time):
         """Send whale alert to Discord"""
         if not self.alert_channel_id:
             print("No alert channel configured")
@@ -146,40 +158,40 @@ class WhaleMonitor(commands.Cog):
 
         print(f"Sending whale alert for ${usd_value:,.2f}")
 
-        # Calculate number of emojis (1 per $20)
-        emoji_count = int(usd_value / 20)
-        
-        # Create excitement level based on size
+       # Get appropriate GIF based on size (Using image/gif links as placeholders)
         if usd_value >= 50000:
-            title = "<:tetsuorage:1317642220228050996> ABSOLUTELY MASSIVE WHALE ALERT! <:tetsuorage:1317642220228050996>"
+            title = "🐋 ABSOLUTELY MASSIVE WHALE ALERT! 🐋"
             excitement = "HOLY MOTHER OF ALL WHALES!"
+            gif_url = "https://media1.tenor.com/m/6TbYHcZ2wQwAAAAd/whale-ocean.gif"
         elif usd_value >= 20000:
-            title = "<:tetsuoblueeyes:1317213296696229919> HUGE Whale Alert! <:tetsuoblueeyes:1317213296696229919>"
+            title = "🌊 HUGE Whale Alert! 🌊"
             excitement = "Now that's what I call a splash!"
+            gif_url = "https://media1.tenor.com/m/6TbYHcZ2wQwAAAAd/whale-ocean.gif"
         elif usd_value >= 5000:
-            title = "<:ascii_dark:1318128794011439186> Big Whale Alert! <:ascii_dark:1318128794011439186>"
+            title = "💦 Big Whale Alert! 💦"
             excitement = "Making waves!"
+            gif_url = "https://media1.tenor.com/m/6TbYHcZ2wQwAAAAd/whale-ocean.gif"
         elif usd_value >= 2000:
-            title = "<:ascii:1318128806158012446> Whale Alert! <:ascii:1318128806158012446>"
+            title = "💫 Shark Alert! So Ferocious! 💫"
             excitement = "Nice buy!"
+            gif_url = "https://media1.tenor.com/m/9jbUEncewVkAAAAd/ebisu-mappa.gif"
         else:
-            title = "<:ascii:1318128806158012446> Baby Whale Alert <:ascii:1318128806158012446>"
-            excitement = "Every whale starts somewhere!"
+            title = "✨ Baby Shark Alert ✨"
+            excitement = "Every shark starts somewhere!"
+            gif_url = "https://media1.tenor.com/m/x-rwdPINKUYAAAAd/tuna-guitar.gif"
 
-        # Create our emoji tsunami (cycle through all custom emojis)
-        emojis = [
-            '<:ascii:1318128806158012446>', 
-            '<:ascii_dark:1318128794011439186>', 
-            '<:tetsuorage:1317642220228050996>', 
-            '<:tetsuoblueeyes:1317213296696229919>'
-        ]
-        emoji_wall = ''.join(emojis[i % len(emojis)] for i in range(emoji_count))
-
+        # Remove emoji wall entirely since we'll use GIF
         embed = discord.Embed(
             title=title,
-            description=f"{excitement}\n\n{emoji_wall}",
-            color=0x00ff00
+            description=excitement,
+            color=0x00ff00,
+            timestamp=trade_time
         )
+        
+        # Add the GIF to the embed
+        embed.set_thumbnail(url=gif_url)  # For smaller GIF in corner
+        # OR
+        embed.set_image(url=gif_url)  # For full-width GIF
 
         # Keep all values on one line
         info_line = f"💰 ${usd_value:,.2f} • 🎯 ${price_usd:.6f} • 📊 {amount_tokens:,.0f} TETSUO"
