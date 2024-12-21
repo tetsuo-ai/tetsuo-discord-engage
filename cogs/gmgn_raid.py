@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import os
 import asyncio
 from playwright.async_api import async_playwright
+import random
+from .scrape_utils import ScrapeUtils
 
 class GmgnRaid(BaseRaid):
     def __init__(self, bot):
@@ -33,25 +35,57 @@ class GmgnRaid(BaseRaid):
             await self.setup_playwright()
 
         try:
+            headers = ScrapeUtils.get_random_headers()
             context = await self.browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                user_agent=headers['User-Agent'],
+                extra_http_headers={k:v for k,v in headers.items() if k != 'User-Agent'}
             )
             
             page = await context.new_page()
-            await page.set_viewport_size({"width": 1280, "height": 800})
+            await page.set_viewport_size({
+                "width": random.randint(1024, 1920),
+                "height": random.randint(768, 1080)
+            })
 
             try:
                 print("Loading GMGN.ai metrics")
                 await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(2)
+                await ScrapeUtils.random_delay(random.uniform(3, 7))
+
+                # Simulate human-like mouse movements
+                for _ in range(random.randint(2, 4)):
+                    await page.mouse.move(
+                        random.randint(0, 1000),
+                        random.randint(0, 700)
+                    )
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+
+                # Random scroll
+                await page.evaluate(f'window.scrollTo(0, {random.randint(100, 300)})')
+                await asyncio.sleep(random.uniform(0.5, 1.5))
                 
-                # Handle the "Got it" popup
+                # Handle the "Got it" popup more naturally
                 try:
                     got_it_button = await page.wait_for_selector('text="Got it"', timeout=10000)
                     if got_it_button:
-                        print("Found Got it button, clicking...")
-                        await got_it_button.click()
-                        await asyncio.sleep(2)
+                        print("Found Got it button")
+                        # Move mouse to button naturally
+                        box = await got_it_button.bounding_box()
+                        if box:
+                            # Move to general area first
+                            await page.mouse.move(
+                                box['x'] + random.randint(-50, 50),
+                                box['y'] + random.randint(-50, 50)
+                            )
+                            await asyncio.sleep(random.uniform(0.1, 0.3))
+                            # Then to button
+                            await page.mouse.move(
+                                box['x'] + box['width']/2 + random.randint(-5, 5),
+                                box['y'] + box['height']/2 + random.randint(-5, 5)
+                            )
+                            await asyncio.sleep(random.uniform(0.2, 0.4))
+                            await got_it_button.click()
+                            await ScrapeUtils.random_delay(random.uniform(1, 2))
                 except Exception as e:
                     print(f"No Got it button found or error clicking it: {e}")
                 
@@ -61,6 +95,15 @@ class GmgnRaid(BaseRaid):
                 vote_img = await page.query_selector('img[src="/static/vote/vote2.png"]')
                 if vote_img:
                     print("✓ Found vote2.png image")
+                    
+                    # Move mouse near image naturally
+                    box = await vote_img.bounding_box()
+                    if box:
+                        await page.mouse.move(
+                            box['x'] + random.randint(5, 20),
+                            box['y'] + random.randint(5, 10)
+                        )
+                        await asyncio.sleep(random.uniform(0.2, 0.5))
                     
                     # Get image's parent element
                     parent = await vote_img.evaluate('node => node.parentElement')
@@ -72,6 +115,15 @@ class GmgnRaid(BaseRaid):
                     # Try to find the percentage div
                     text_elements = await page.query_selector('div:has(img[src="/static/vote/vote2.png"]) + div')
                     if text_elements:
+                        # Move to text element
+                        box = await text_elements.bounding_box()
+                        if box:
+                            await page.mouse.move(
+                                box['x'] + random.randint(5, 20),
+                                box['y'] + random.randint(5, 10)
+                            )
+                            await asyncio.sleep(random.uniform(0.2, 0.5))
+                        
                         print("✓ Found div after image")
                         text = await text_elements.text_content()
                         print(f"Text content found: '{text}'")
@@ -83,17 +135,6 @@ class GmgnRaid(BaseRaid):
                             print(f"✗ Could not convert '{text}' to float")
                     else:
                         print("✗ Could not find div after image")
-                        
-                    # Let's also log nearby elements to see the structure
-                    nearby = await page.evaluate('''() => {
-                        const img = document.querySelector('img[src="/static/vote/vote2.png"]');
-                        if (!img) return 'No image found';
-                        return img.parentElement.parentElement.innerHTML;
-                    }''')
-                    print("\nNearby HTML structure:")
-                    print(nearby)
-                else:
-                    print("✗ Could not find vote2.png image at all")
 
                 print("Could not find vote percentage")
                 return 0
@@ -106,8 +147,10 @@ class GmgnRaid(BaseRaid):
                 return 0
                 
             finally:
-                await page.close()
-                await context.close()
+                if 'page' in locals():
+                    await page.close()
+                if 'context' in locals():
+                    await context.close()
                     
         except Exception as e:
             print(f"Browser error: {e}")
@@ -212,7 +255,7 @@ class GmgnRaid(BaseRaid):
             except Exception as e:
                 print(f"Error monitoring raid: {e}")
             
-            await asyncio.sleep(30)
+            await ScrapeUtils.random_delay(30)  # 30 seconds base with jitter
 
     @commands.command(name='raid_gmgn')
     @commands.has_permissions(manage_channels=True)

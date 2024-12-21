@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import os
 import asyncio
 from playwright.async_api import async_playwright
+import random
+from .scrape_utils import ScrapeUtils
 
 class GeckoRaid(BaseRaid):
     def __init__(self, bot):
@@ -33,28 +35,62 @@ class GeckoRaid(BaseRaid):
             await self.setup_playwright()
 
         try:
+            # Get randomized headers
+            headers = ScrapeUtils.get_random_headers()
             context = await self.browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                user_agent=headers['User-Agent'],
+                extra_http_headers={k:v for k,v in headers.items() if k != 'User-Agent'}
             )
             
             page = await context.new_page()
-            await page.set_viewport_size({"width": 1280, "height": 800})
+            await page.set_viewport_size({
+                "width": random.randint(1024, 1920),
+                "height": random.randint(768, 1080)
+            })
 
             try:
                 print("Loading Gecko metrics")
                 await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(5)
+                await ScrapeUtils.random_delay(random.uniform(3, 7))
+
+                # Simulate human-like mouse movements
+                for _ in range(random.randint(2, 4)):
+                    await page.mouse.move(
+                        random.randint(0, 1000),
+                        random.randint(0, 700)
+                    )
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+
+                # Random scroll
+                await page.evaluate(f'window.scrollTo(0, {random.randint(100, 300)})')
+                await asyncio.sleep(random.uniform(0.5, 1.5))
                 
-                print("Page loaded, searching for sentiment...")
-                
-                # Find sentiment section by looking for the question text
+                print("Beginning sentiment question search...")
                 text_element = await page.query_selector("text='How do you feel about TETSUO/SOL today?'")
                 if text_element:
                     print("Found sentiment question text")
                     
+                    # Move mouse near the question text naturally
+                    box = await text_element.bounding_box()
+                    if box:
+                        await page.mouse.move(
+                            box['x'] + random.randint(5, 20),
+                            box['y'] + random.randint(5, 10)
+                        )
+                        await asyncio.sleep(random.uniform(0.2, 0.5))
+                    
                     # Get the sentiment div with the width style
                     percent_element = await page.query_selector("div.bg-buy[style*='width']")
                     if percent_element:
+                        # Move mouse near the percentage element
+                        box = await percent_element.bounding_box()
+                        if box:
+                            await page.mouse.move(
+                                box['x'] + random.randint(5, 20),
+                                box['y'] + random.randint(5, 10)
+                            )
+                            await asyncio.sleep(random.uniform(0.2, 0.5))
+                        
                         # Try getting percentage from text first
                         text = await percent_element.inner_text()
                         if text.strip():
@@ -87,8 +123,10 @@ class GeckoRaid(BaseRaid):
                 return 0
                 
             finally:
-                await page.close()
-                await context.close()
+                if 'page' in locals():
+                    await page.close()
+                if 'context' in locals():
+                    await context.close()
                     
         except Exception as e:
             print(f"Browser error: {e}")
@@ -193,7 +231,7 @@ class GeckoRaid(BaseRaid):
             except Exception as e:
                 print(f"Error monitoring raid: {e}")
             
-            await asyncio.sleep(30)
+            await ScrapeUtils.random_delay(30)
 
     @commands.command(name='raid_gecko')
     @commands.has_permissions(manage_channels=True)

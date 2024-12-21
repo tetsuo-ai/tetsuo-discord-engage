@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 import re
 import json
+import random
+from .scrape_utils import ScrapeUtils
 
 load_dotenv()
 
@@ -170,25 +172,55 @@ class TwitterRaid(BaseRaid):
             await self.setup_playwright()
 
         try:
+            headers = ScrapeUtils.get_random_headers()
             context = await self.browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                user_agent=headers['User-Agent'],
+                extra_http_headers={k:v for k,v in headers.items() if k != 'User-Agent'}
             )
             
             page = await context.new_page()
-            await page.set_viewport_size({"width": 1280, "height": 800})
+            await page.set_viewport_size({
+                "width": random.randint(1024, 1920),
+                "height": random.randint(768, 1080)
+            })
             
             try:
                 await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(5)
+                await ScrapeUtils.random_delay(random.uniform(3, 7))
                 
-                # Handle the notifications popup
+                # Simulate human-like mouse movements
+                for _ in range(random.randint(2, 4)):
+                    await page.mouse.move(
+                        random.randint(0, 1000),
+                        random.randint(0, 700)
+                    )
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+
+                # Random scroll - Twitter often needs it
+                await page.evaluate(f'window.scrollTo(0, {random.randint(100, 400)})')
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+                
+                # Handle the notifications popup with human-like interaction
                 try:
-                    # Look for either the "Turn on notifications" or "Not now" button
                     notification_button = await page.wait_for_selector('div[role="button"]:has-text("Not now")', timeout=5000)
                     if notification_button:
                         print("Found notifications popup, dismissing...")
-                        await notification_button.click()
-                        await asyncio.sleep(2)  # Give it a moment to dismiss
+                        box = await notification_button.bounding_box()
+                        if box:
+                            # Move to general area first
+                            await page.mouse.move(
+                                box['x'] + random.randint(-50, 50),
+                                box['y'] + random.randint(-50, 50)
+                            )
+                            await asyncio.sleep(random.uniform(0.1, 0.3))
+                            # Then to button
+                            await page.mouse.move(
+                                box['x'] + box['width']/2 + random.randint(-5, 5),
+                                box['y'] + box['height']/2 + random.randint(-5, 5)
+                            )
+                            await asyncio.sleep(random.uniform(0.2, 0.4))
+                            await notification_button.click()
+                            await ScrapeUtils.random_delay(random.uniform(1, 2))
                 except Exception as e:
                     print(f"No notifications popup or error handling it: {e}")
                 
@@ -212,6 +244,22 @@ class TwitterRaid(BaseRaid):
                             if not button:
                                 print(f"No {button_type} button found")
                                 continue
+
+                            # Move mouse to each button naturally
+                            box = await button.bounding_box()
+                            if box:
+                                # First move nearby
+                                await page.mouse.move(
+                                    box['x'] + random.randint(-30, 30),
+                                    box['y'] + random.randint(-30, 30)
+                                )
+                                await asyncio.sleep(random.uniform(0.1, 0.3))
+                                # Then to button
+                                await page.mouse.move(
+                                    box['x'] + box['width']/2 + random.randint(-5, 5),
+                                    box['y'] + box['height']/2 + random.randint(-5, 5)
+                                )
+                                await asyncio.sleep(random.uniform(0.2, 0.4))
 
                             text = await button.evaluate('el => el.textContent')
                             if not text.strip():
@@ -238,7 +286,7 @@ class TwitterRaid(BaseRaid):
                                 
                         except Exception as e:
                             print(f"Error processing {button_type} metric: {e}")
-                            continue  # Move to next metric on error
+                            continue
                             
                 except Exception as e:
                     print(f"Error during metrics extraction: {e}")
@@ -249,8 +297,10 @@ class TwitterRaid(BaseRaid):
                 print(f"Error during page load or metric extraction: {e}")
                 
             finally:
-                await page.close()
-                await context.close()
+                if 'page' in locals():
+                    await page.close()
+                if 'context' in locals():
+                    await context.close()
                     
         except Exception as e:
             print(f"Error in get_tweet_metrics: {e}")
@@ -577,7 +627,7 @@ class TwitterRaid(BaseRaid):
             except Exception as e:
                 print(f"Error monitoring engagement: {e}")
             
-            await asyncio.sleep(30)
+            await ScrapeUtils.random_delay(30)  # 30 seconds base with jitter
 
     def cog_unload(self):
         if self.browser:
