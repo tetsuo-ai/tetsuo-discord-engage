@@ -11,6 +11,8 @@ class BaseRaid(commands.Cog):
 
     async def check_raid_channel(self, ctx):
         """Check if the command is being used in the designated raid channel"""
+        self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
+        
         if not self.raid_channel_id:
             await ctx.send("❌ No raid channel has been set! An administrator must use !set_raid_channel first.", delete_after=10)
             return False

@@ -272,6 +272,7 @@ class WhaleMonitor(commands.Cog):
     async def set_whale_channel(self, ctx):
         """Set the current channel as the whale alert channel"""
         self.alert_channel_id = ctx.channel.id
+        os.environ['WHALE_ALERT_CHANNEL'] = str(ctx.channel.id)
         
         env_path = '.env'
         new_var = f'WHALE_ALERT_CHANNEL={ctx.channel.id}'

@@ -299,6 +299,7 @@ class ChannelManager(commands.Cog):
     async def set_raid_channel(self, ctx):
         """Set the current channel as the designated raid channel"""
         self.raid_channel_id = ctx.channel.id
+        os.environ['RAID_CHANNEL_ID'] = str(ctx.channel.id)
         
         env_path = '.env'
         new_var = f'RAID_CHANNEL_ID={ctx.channel.id}'
