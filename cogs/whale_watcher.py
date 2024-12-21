@@ -271,38 +271,42 @@ class WhaleMonitor(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def set_whale_channel(self, ctx):
         """Set the current channel as the whale alert channel"""
-        self.alert_channel_id = ctx.channel.id
-        os.environ['WHALE_ALERT_CHANNEL'] = str(ctx.channel.id)
-        
-        env_path = '.env'
-        new_var = f'WHALE_ALERT_CHANNEL={ctx.channel.id}'
-        
-        if os.path.exists(env_path):
-            with open(env_path, 'r') as file:
-                lines = file.readlines()
+        try:
+            self.alert_channel_id = ctx.channel.id
             
-            found = False
-            for i, line in enumerate(lines):
-                if line.startswith('WHALE_ALERT_CHANNEL='):
-                    lines[i] = f'{new_var}\n'
-                    found = True
-                    break
+            # Update environment
+            env_path = '.env'
+            env_vars = {}
             
-            if not found:
-                lines.append(f'\n{new_var}\n')
+            # Read existing .env
+            if os.path.exists(env_path):
+                with open(env_path, 'r') as file:
+                    for line in file:
+                        if '=' in line:
+                            key, value = line.strip().split('=', 1)
+                            env_vars[key] = value
             
+            # Update value
+            env_vars['WHALE_ALERT_CHANNEL'] = str(ctx.channel.id)
+            
+            # Write back to .env
             with open(env_path, 'w') as file:
-                file.writelines(lines)
-        else:
-            with open(env_path, 'a') as file:
-                file.write(f'{new_var}\n')
-        
-        await ctx.send(
-            f"✅ This channel has been set for whale alerts.\n"
-            f"Channel ID: `{ctx.channel.id}`\n"
-            f"Monitoring buys above ${self.min_usd_threshold:,}", 
-            delete_after=30
-        )
+                for key, value in env_vars.items():
+                    file.write(f'{key}={value}\n')
+            
+            # Update runtime environment
+            os.environ['WHALE_ALERT_CHANNEL'] = str(ctx.channel.id)
+            
+            await ctx.send(
+                f"✅ This channel has been set for whale alerts.\n"
+                f"Channel ID: `{ctx.channel.id}`\n"
+                f"Monitoring buys above ${self.min_usd_threshold:,}", 
+                delete_after=30
+            )
+            
+        except Exception as e:
+            print(f"Error setting whale channel: {e}")
+            await ctx.send(f"❌ Error setting whale channel: {str(e)}", delete_after=30)
 
     @commands.command(name='set_whale_minimum')
     @commands.has_permissions(administrator=True)
