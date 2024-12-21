@@ -294,46 +294,50 @@ class ChannelManager(commands.Cog):
             
         await ctx.send(embed=embed, delete_after=30)
 
-    @commands.command(name='set_whale_channel')
-    @commands.has_permissions(administrator=True)
-    async def set_whale_channel(self, ctx):
-        """Set the current channel as the whale alert channel"""
+    @commands.command(name='set_raid_channel')
+    @commands.has_permissions(administrator=True) 
+    async def set_raid_channel(self, ctx, channel_id: str):
+        """Set the raid channel by ID"""
         try:
-            self.alert_channel_id = ctx.channel.id
+            self.raid_channel_id = int(channel_id)
             
             # Update environment
             env_path = '.env'
-            env_vars = {}
+            existing_lines = []
+            updated = False
             
-            # Read existing .env
             if os.path.exists(env_path):
                 with open(env_path, 'r') as file:
-                    for line in file:
-                        if '=' in line and line.strip():
-                            key, value = line.strip().split('=', 1)
-                            env_vars[key] = value
+                    existing_lines = file.readlines()
+                    
+                for i, line in enumerate(existing_lines):
+                    if line.strip().startswith('RAID_CHANNEL_ID='):
+                        existing_lines[i] = f'RAID_CHANNEL_ID={channel_id}\n'
+                        updated = True
+                        break
+                
+                if not updated:
+                    existing_lines.append(f'RAID_CHANNEL_ID={channel_id}\n')
+            else:
+                existing_lines = [f'RAID_CHANNEL_ID={channel_id}\n']
             
-            # Update value
-            env_vars['WHALE_ALERT_CHANNEL'] = str(ctx.channel.id)
-            
-            # Write back to .env
             with open(env_path, 'w') as file:
-                for key, value in env_vars.items():
-                    file.write(f'{key}={value}\n')
+                file.writelines(existing_lines)
             
-            # Update runtime environment
-            os.environ['WHALE_ALERT_CHANNEL'] = str(ctx.channel.id)
+            os.environ['RAID_CHANNEL_ID'] = channel_id
             
-            await ctx.send(
-                f"✅ This channel has been set for whale alerts.\n"
-                f"Channel ID: `{ctx.channel.id}`\n"
-                f"Monitoring buys above ${self.min_usd_threshold:,}", 
-                delete_after=30
-            )
-        
+            # Update other cogs
+            for cog_name in ['TwitterRaid', 'CMCRaid', 'GeckoRaid', 'GmgnRaid', 'DextoolsRaid']:
+                if cog := self.bot.get_cog(cog_name):
+                    cog.raid_channel_id = self.raid_channel_id
+            
+            await ctx.send(f"✅ Channel ID {channel_id} has been set as the raid channel.", delete_after=30)
+                
+        except ValueError:
+            await ctx.send("❌ Please provide a valid channel ID", delete_after=10)
         except Exception as e:
-            print(f"Error setting whale channel: {e}")
-            await ctx.send(f"❌ Error setting whale channel: {str(e)}", delete_after=30)
+            print(f"Error setting raid channel: {e}")
+            await ctx.send(f"❌ Error setting raid channel: {str(e)}", delete_after=30)
 
     @commands.command(name='raid_stop')
     @commands.has_permissions(manage_channels=True)
