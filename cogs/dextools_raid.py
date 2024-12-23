@@ -7,6 +7,8 @@ import asyncio
 from playwright.async_api import async_playwright
 import random
 from .scrape_utils import ScrapeUtils
+import logging
+logger = logging.getLogger('tetsuo_bot.dextools_raid')
 
 class DextoolsRaid(BaseRaid):
     def __init__(self, bot):
@@ -24,9 +26,8 @@ class DextoolsRaid(BaseRaid):
                     headless=True,
                     args=['--no-sandbox', '--disable-setuid-sandbox']
                 )
-                print("Dextools Raid: Playwright browser initialized successfully")
             except Exception as e:
-                print(f"Error initializing Playwright: {e}")
+                logger.error(f"Error initializing Playwright: {e}", exc_info=True)
                 raise e
 
     async def get_metrics(self):
@@ -48,7 +49,7 @@ class DextoolsRaid(BaseRaid):
             })
 
             try:
-                print("Loading Dextools metrics")
+                logger.info("Loading Dextools metrics")
                 await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
                 await ScrapeUtils.random_delay(random.uniform(3, 7))  # SPA needs time to hydrate
 
@@ -84,24 +85,19 @@ class DextoolsRaid(BaseRaid):
                         await asyncio.sleep(random.uniform(0.2, 0.5))
                     
                     text = await percent_element.text_content()
-                    print(f"Found percentage text: {text}")
                     try:
                         # Strip the % and whitespace, convert to float
                         value = float(text.strip().rstrip('%'))
-                        print(f"Successfully parsed value: {value}%")
                         return value
                     except ValueError:
-                        print(f"Could not convert '{text}' to float")
+                        logger.warning(f"Could not convert '{text}' to float")
                 else:
-                    print("Could not find sentiment percentage element")
+                    logger.warning("Could not find sentiment percentage element")
                 
                 return 0
                     
             except Exception as e:
-                print(f"Error during page processing: {e}")
-                print(f"Error type: {type(e)}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Error during page processing: {e}", exc_info=True)
                 return 0
                 
             finally:
@@ -111,7 +107,7 @@ class DextoolsRaid(BaseRaid):
                     await context.close()
                     
         except Exception as e:
-            print(f"Browser error: {e}")
+            logger.error(f"Browser error: {e}", exc_info=True)
             return 0
     
     async def create_progress_embed(self, current_value, target_value):
@@ -211,7 +207,7 @@ class DextoolsRaid(BaseRaid):
                 await progress_message.edit(embed=progress_embed)
                 
             except Exception as e:
-                print(f"Error monitoring raid: {e}")
+                logger.error(f"Error monitoring raid: {e}", exc_info=True)
             
             await ScrapeUtils.random_delay(30)  # 30 seconds base with jitter
 
@@ -266,7 +262,7 @@ class DextoolsRaid(BaseRaid):
             await self.monitor_raid(ctx, target_value, timeout_minutes)
             
         except Exception as e:
-            print(f"Error in raid_dextools: {e}")
+            logger.error(f"Error in raid_dextools: {e}", exc_info=True)
             await ctx.send(f"Error: {str(e)}")
             await self.unlock_channel(ctx.channel)
 

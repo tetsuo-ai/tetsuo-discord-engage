@@ -5,6 +5,8 @@ import aiohttp
 import os
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+import logging
+logger = logging.getLogger('tetsuo_bot.whale_watcher')
 
 class WhaleMonitor(commands.Cog):
     def __init__(self, bot):
@@ -39,7 +41,7 @@ class WhaleMonitor(commands.Cog):
 
                 # Double-check we're in the right channel before doing any cleanup
                 if not isinstance(channel, discord.TextChannel):
-                    print("Whale alert channel is not a text channel")
+                    logger.warning("Whale alert channel is not a text channel")
                     await asyncio.sleep(60)
                     continue
 
@@ -70,17 +72,17 @@ class WhaleMonitor(commands.Cog):
                                 # Small delay to avoid rate limits
                                 await asyncio.sleep(1)
                         except Exception as e:
-                            print(f"Error deleting message in whale channel: {e}")
+                            logger.error(f"Error deleting message in whale channel: {e}", exc_info=True)
                             continue
                     
                     if deleted_count > 0:
-                        print(f"Cleaned up {deleted_count} messages from whale alert channel")
+                        logger.info(f"Cleaned up {deleted_count} messages from whale alert channel")
                 
                 # Run cleanup every 5 minutes
                 await asyncio.sleep(300)
                     
             except Exception as e:
-                print(f"Error in whale channel cleanup: {e}")
+                logger.error(f"Error in whale channel cleanup: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
     async def start_monitoring(self):
@@ -91,7 +93,7 @@ class WhaleMonitor(commands.Cog):
         # Set the bot start time on first run with UTC timezone
         if self.bot_start_time is None:
             self.bot_start_time = datetime.now(timezone.utc)
-            print(f"Whale Monitor: Initialized at {self.bot_start_time}")
+            logger.info(f"Whale Monitor: Initialized at {self.bot_start_time}")
 
         # Track our API calls
         request_times = []
@@ -112,7 +114,7 @@ class WhaleMonitor(commands.Cog):
                     # Wait until oldest request is more than 60s old
                     wait_time = 60 - (current_time - request_times[0]).total_seconds()
                     if wait_time > 0:
-                        print(f"Rate limit approaching, waiting {wait_time:.1f}s")
+                        logger.info(f"Rate limit approaching, waiting {wait_time:.1f}s")
                         await asyncio.sleep(wait_time)
                     continue
 
@@ -125,12 +127,12 @@ class WhaleMonitor(commands.Cog):
                 async with self.session.get(self.api_url, params=params) as response:
                     if response.status == 429:  # Rate limit
                         retry_after = int(response.headers.get('Retry-After', 30))
-                        print(f"Rate limited, waiting {retry_after}s")
+                        logger.warning(f"Rate limited, waiting {retry_after}s")
                         await asyncio.sleep(retry_after)
                         continue
                         
                     if response.status != 200:
-                        print(f"API error: {response.status}")
+                        logger.error(f"API error: {response.status}")
                         await asyncio.sleep(30)
                         continue
 
@@ -141,10 +143,10 @@ class WhaleMonitor(commands.Cog):
                 await asyncio.sleep(2)
 
             except aiohttp.ClientError as e:
-                print(f"Connection error: {e}")
+                logger.error(f"Connection error: {e}", exc_info=True)
                 await asyncio.sleep(30)
             except Exception as e:
-                print(f"Monitoring error: {e}")
+                logger.error(f"Monitoring error: {e}", exc_info=True)
                 await asyncio.sleep(30)
 
     async def process_trades(self, data):
@@ -192,7 +194,7 @@ class WhaleMonitor(commands.Cog):
                 )
 
             except Exception as e:
-                print(f"Error processing trade: {e}")
+                logger.error(f"Error processing trade: {e}", exc_info=True)
                 continue
 
         # Clean up old transactions (older than 1 hour)
@@ -205,15 +207,15 @@ class WhaleMonitor(commands.Cog):
     async def send_whale_alert(self, transaction, usd_value, price_usd, amount_tokens, price_impact, trade_time):
         """Send whale alert to Discord"""
         if not self.alert_channel_id:
-            print("No alert channel configured")
+            logger.warning("No alert channel configured")
             return
                 
         channel = self.bot.get_channel(self.alert_channel_id)
         if not channel:
-            print(f"Could not find channel with ID: {self.alert_channel_id}")
+            logger.error(f"Could not find channel with ID: {self.alert_channel_id}")
             return
 
-        print(f"Sending whale alert for ${usd_value:,.2f}")
+        logger.info(f"Sending whale alert for ${usd_value:,.2f}")
 
        # Get appropriate GIF based on size (Using image/gif links as placeholders)
         if usd_value >= 50000:
@@ -263,9 +265,9 @@ class WhaleMonitor(commands.Cog):
 
         try:
             await channel.send(embed=embed)
-            print(f"Successfully sent alert for tx: {transaction}")
+            logger.info(f"Successfully sent alert for tx: {transaction}")
         except Exception as e:
-            print(f"Error sending whale alert: {e}")
+            logger.error(f"Error sending whale alert: {e}", exc_info=True)
 
     @commands.command(name='set_whale_channel')
     @commands.has_permissions(administrator=True)
@@ -304,7 +306,7 @@ class WhaleMonitor(commands.Cog):
         except ValueError:
             await ctx.send("❌ Please provide a valid channel ID", delete_after=10)
         except Exception as e:
-            print(f"Error setting whale channel: {e}")
+            logger.error(f"Error setting whale channel: {e}", exc_info=True)
             await ctx.send(f"❌ Error setting whale channel: {str(e)}", delete_after=30)
 
     @commands.command(name='set_whale_minimum')
@@ -380,10 +382,10 @@ class WhaleMonitor(commands.Cog):
         """Start monitoring when bot is ready"""
         if not self.monitor_task:
             self.monitor_task = self.bot.loop.create_task(self.start_monitoring())
-            print("Whale Monitor: Started monitoring buys")
+            logger.info("Whale Monitor: Started monitoring buys")
         if not self.cleanup_task:
             self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
-            print("Whale Monitor: Started channel cleanup task")
+            logger.info("Whale Monitor: Started channel cleanup task")
 
     def cog_unload(self):
         """Cleanup when cog is unloaded"""

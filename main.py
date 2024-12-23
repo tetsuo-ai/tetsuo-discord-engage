@@ -4,18 +4,50 @@ from dotenv import load_dotenv
 import discord
 from discord.ext import commands
 import logging
+from logging.handlers import RotatingFileHandler
 
 # Set up logging
-logging.basicConfig(level=logging.WARN)
-logger = logging.getLogger('discord')
-logger.setLevel(logging.WARN)
+os.makedirs('logs', exist_ok=True)
+detailed_formatter = logging.Formatter(
+    '[%(asctime)s] %(levelname)s [%(name)s.%(funcName)s:%(lineno)d] %(message)s'
+)
+simple_formatter = logging.Formatter(
+    '[%(asctime)s] %(levelname)s: %(message)s'
+)
+
+# File handler
+file_handler = RotatingFileHandler(
+    'logs/discord_bot.log',
+    maxBytes=10485760,  # 10MB
+    backupCount=5
+)
+file_handler.setFormatter(detailed_formatter)
+file_handler.setLevel(logging.INFO)
+
+# Console handler
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(simple_formatter)
+console_handler.setLevel(logging.INFO)
+
+# Root logger setup
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
+
+# Discord logger specific setup
+discord_logger = logging.getLogger('discord')
+discord_logger.setLevel(logging.INFO)
+
+# Main application logger
+logger = logging.getLogger('tetsuo_bot')
 
 # Load environment variables
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
 
 async def main():
-    print("Starting bot initialization...")
+    logger.info("Starting bot initialization...")
     
     intents = discord.Intents.default()
     intents.message_content = True
@@ -26,17 +58,17 @@ async def main():
     
     @bot.event
     async def on_ready():
-        print(f'Successfully logged in as {bot.user.name} (ID: {bot.user.id})')
-        print(f'Connected to {len(bot.guilds)} guilds')
-        print('------')
+        logger.info(f'Successfully logged in as {bot.user.name} (ID: {bot.user.id})')
+        logger.info(f'Connected to {len(bot.guilds)} guilds')
+        logger.info('------')
 
     @bot.event
     async def on_connect():
-        print("Bot connected to Discord!")
+        logger.info("Bot connected to Discord!")
 
     @bot.event
     async def on_disconnect():
-        print("Bot disconnected from Discord!")
+        logger.warning("Bot disconnected from Discord!")
 
     @bot.command()
     async def ping(ctx):
@@ -44,46 +76,47 @@ async def main():
     
     try:
         # Load channel manager first
-        print("Loading Channel manager extension...")
+        logger.info("Loading Channel manager extension...")
         await bot.load_extension('cogs.channel_manager')
-        print("Channel manager loaded successfully!")
+        logger.info("Channel manager loaded successfully!")
 
         # Load raid extensions
-        print("Loading Twitter raid extension...")
+        logger.info("Loading Twitter raid extension...")
         await bot.load_extension('cogs.twitter_raid')
-        print("Twitter raid loaded successfully!")
+        logger.info("Twitter raid loaded successfully!")
         
-        print("Loading CMC raid extension...")
+        logger.info("Loading CMC raid extension...")
         await bot.load_extension('cogs.cmc_raid')
-        print("CMC raid loaded successfully!")
+        logger.info("CMC raid loaded successfully!")
 
-        print("Loading Gecko raid extension...")
+        logger.info("Loading Gecko raid extension...")
         await bot.load_extension('cogs.gecko_raid')
-        print("Gecko raid loaded successfully!")
+        logger.info("Gecko raid loaded successfully!")
 
-        print("Loading GMGN raid extension...")
+        logger.info("Loading GMGN raid extension...")
         await bot.load_extension('cogs.gmgn_raid')
-        print("GMGN raid loaded successfully!")
+        logger.info("GMGN raid loaded successfully!")
 
-        print("Loading Dextools raid extension...")
+        logger.info("Loading Dextools raid extension...")
         await bot.load_extension('cogs.dextools_raid')
-        print("Dextools raid loaded successfully!")
+        logger.info("Dextools raid loaded successfully!")
 
-        print("Loading Whale Watcher extension...")
+        logger.info("Loading Whale Watcher extension...")
         await bot.load_extension('cogs.whale_watcher')
-        print("Whale Watcher loaded successfully!")
+        logger.info("Whale Watcher loaded successfully!")
         
     except Exception as e:
-        print(f"Failed to load extension: {e}")
+        logger.error(f"Failed to load extension: {e}", exc_info=True)
     
     try:
-        print("Attempting to start bot...")
+        logger.info("Attempting to start bot...")
         if not token:
+            logger.critical("No Discord token found in .env file")
             raise ValueError("No Discord token found in .env file")
         await bot.start(token)
     except Exception as e:
-        print(f"Error starting bot: {e}")
+        logger.exception(f"Error starting bot: {e}")
         raise e
 
-print("Script starting...")
+logger.info("Script starting...")
 asyncio.run(main())

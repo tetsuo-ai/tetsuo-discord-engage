@@ -7,6 +7,8 @@ import asyncio
 from playwright.async_api import async_playwright
 import random
 from .scrape_utils import ScrapeUtils
+import logging
+logger = logging.getLogger('tetsuo_bot.gecko_raid')
 
 class GeckoRaid(BaseRaid):
     def __init__(self, bot):
@@ -24,9 +26,9 @@ class GeckoRaid(BaseRaid):
                     headless=True,
                     args=['--no-sandbox', '--disable-setuid-sandbox']
                 )
-                print("Gecko Raid: Playwright browser initialized successfully")
+                logger.info("Playwright browser initialized successfully")
             except Exception as e:
-                print(f"Error initializing Playwright: {e}")
+                logger.error(f"Error initializing Playwright: {e}", exc_info=True)
                 raise e
 
     async def get_metrics(self):
@@ -49,7 +51,7 @@ class GeckoRaid(BaseRaid):
             })
 
             try:
-                print("Loading Gecko metrics")
+                logger.info("Loading Gecko metrics")
                 await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
                 await ScrapeUtils.random_delay(random.uniform(3, 7))
 
@@ -65,10 +67,10 @@ class GeckoRaid(BaseRaid):
                 await page.evaluate(f'window.scrollTo(0, {random.randint(100, 300)})')
                 await asyncio.sleep(random.uniform(0.5, 1.5))
                 
-                print("Beginning sentiment question search...")
+                logger.debug("Beginning sentiment question search...")
                 text_element = await page.query_selector("text='How do you feel about TETSUO/SOL today?'")
                 if text_element:
-                    print("Found sentiment question text")
+                    logger.debug("Found sentiment question text")
                     
                     # Move mouse near the question text naturally
                     box = await text_element.bounding_box()
@@ -96,7 +98,7 @@ class GeckoRaid(BaseRaid):
                         if text.strip():
                             try:
                                 value = float(text.strip('%'))
-                                print(f"Found sentiment from text: {value}%")
+                                logger.info(f"Found sentiment from text: {value}%")
                                 return value
                             except ValueError:
                                 pass
@@ -107,19 +109,16 @@ class GeckoRaid(BaseRaid):
                             try:
                                 width_value = width_style.split('width:')[1].split('%')[0].strip()
                                 value = float(width_value)
-                                print(f"Found sentiment from width: {value}%")
+                                logger.info(f"Found sentiment from width: {value}%")
                                 return value
                             except:
-                                print("Could not extract percentage from width style")
+                                logger.warning("Could not extract percentage from width style")
 
-                print("Could not find sentiment percentage")
+                logger.warning("Could not find sentiment percentage")
                 return 0
                     
             except Exception as e:
-                print(f"Error during page processing: {e}")
-                print(f"Error type: {type(e)}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Error during page processing: {e}", exc_info=True)
                 return 0
                 
             finally:
@@ -129,7 +128,7 @@ class GeckoRaid(BaseRaid):
                     await context.close()
                     
         except Exception as e:
-            print(f"Browser error: {e}")
+            logger.error(f"Browser error: {e}", exc_info=True)
             return 0
     
     async def create_progress_embed(self, current_value, target_value):
@@ -229,7 +228,7 @@ class GeckoRaid(BaseRaid):
                 await progress_message.edit(embed=progress_embed)
                 
             except Exception as e:
-                print(f"Error monitoring raid: {e}")
+                logger.error(f"Error monitoring raid: {e}", exc_info=True)
             
             await ScrapeUtils.random_delay(30)
 
@@ -284,7 +283,7 @@ class GeckoRaid(BaseRaid):
             await self.monitor_raid(ctx, target_value, timeout_minutes)
             
         except Exception as e:
-            print(f"Error in raid_gecko: {e}")
+            logger.error(f"Error in raid_gecko: {e}", exc_info=True)
             await ctx.send(f"Error: {str(e)}")
             await self.unlock_channel(ctx.channel)
 

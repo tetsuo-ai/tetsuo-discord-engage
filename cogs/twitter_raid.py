@@ -10,6 +10,8 @@ import re
 import json
 import random
 from .scrape_utils import ScrapeUtils
+import logging
+logger = logging.getLogger('tetsuo_bot.twitter_raid')
 
 load_dotenv()
 
@@ -38,7 +40,7 @@ class TwitterRaid(BaseRaid):
                         if raid['timestamp'] > cutoff
                     ]
         except Exception as e:
-            print(f"Error loading raid history: {e}")
+            logger.error(f"Error loading raid history: {e}", exc_info=True)
             self.raid_history = []
 
     def save_raid_history(self):
@@ -53,7 +55,7 @@ class TwitterRaid(BaseRaid):
             with open(self.history_file, 'w') as f:
                 json.dump(history_data, f, indent=2)
         except Exception as e:
-            print(f"Error saving raid history: {e}")
+            logger.error(f"Error saving raid history: {e}", exc_info=True)
 
     async def update_raid_history(self, channel_id, tweet_url, success, duration_minutes, final_progress):
         if not self.raid_channel_id:
@@ -144,7 +146,6 @@ class TwitterRaid(BaseRaid):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print('TwitterRaid is ready')
         await self.setup_playwright()
 
     def cog_unload(self):
@@ -159,13 +160,12 @@ class TwitterRaid(BaseRaid):
                 headless=True,
                 args=['--no-sandbox', '--disable-setuid-sandbox']
             )
-            print("Playwright browser initialized successfully")
         except Exception as e:
-            print(f"Error initializing Playwright: {e}")
+            logger.error(f"Error initializing Playwright: {e}", exc_info=True)
             raise e
 
     async def get_tweet_metrics(self, tweet_url):
-        print(f"Fetching metrics for tweet: {tweet_url}")
+        logger.info(f"Fetching metrics for tweet: {tweet_url}")
         tweet_url = tweet_url.replace('x.com', 'twitter.com')
         
         if not self.browser:
@@ -204,7 +204,7 @@ class TwitterRaid(BaseRaid):
                 try:
                     notification_button = await page.wait_for_selector('div[role="button"]:has-text("Not now")', timeout=5000)
                     if notification_button:
-                        print("Found notifications popup, dismissing...")
+                        logger.debug("Found notifications popup, dismissing...")
                         box = await notification_button.bounding_box()
                         if box:
                             # Move to general area first
@@ -222,7 +222,7 @@ class TwitterRaid(BaseRaid):
                             await notification_button.click()
                             await ScrapeUtils.random_delay(random.uniform(1, 2))
                 except Exception as e:
-                    print(f"No notifications popup or error handling it: {e}")
+                    logger.debug(f"No notifications popup or error handling it: {e}")
                 
                 metrics = {
                     'likes': 0,
@@ -234,7 +234,7 @@ class TwitterRaid(BaseRaid):
                 try:
                     metrics_group = await page.query_selector('div[role="group"][aria-label*="replies"]')
                     if not metrics_group:
-                        print("No metrics group found")
+                        logger.warning("No metrics group found")
                         return metrics
                         
                     # Find all buttons with data-testid attributes and their text content
@@ -242,7 +242,7 @@ class TwitterRaid(BaseRaid):
                         try:
                             button = await page.query_selector(f'button[data-testid="{button_type}"]')
                             if not button:
-                                print(f"No {button_type} button found")
+                                logger.debug(f"No {button_type} button found")
                                 continue
 
                             # Move mouse to each button naturally
@@ -263,9 +263,9 @@ class TwitterRaid(BaseRaid):
 
                             text = await button.evaluate('el => el.textContent')
                             if not text.strip():
-                                print(f"Empty {button_type} count text")
+                                logger.debug(f"Empty {button_type} count text")
                                 continue
-                            print(f"Found {button_type} count: {text}")
+                            logger.debug(f"Found {button_type} count: {text}")
                             
                             # Clean and parse the number
                             try:
@@ -282,19 +282,19 @@ class TwitterRaid(BaseRaid):
                                 else:
                                     metrics[f"{button_type}s"] = int(number)
                             except (ValueError, TypeError) as e:
-                                print(f"Could not parse {button_type} count: {text} - Error: {e}")
+                                logger.warning(f"Could not parse {button_type} count: {text} - Error: {e}")
                                 
                         except Exception as e:
-                            print(f"Error processing {button_type} metric: {e}")
+                            logger.error(f"Error processing {button_type} metric: {e}", exc_info=True)
                             continue
                             
                 except Exception as e:
-                    print(f"Error during metrics extraction: {e}")
+                    logger.error(f"Error during metrics extraction: {e}", exc_info=True)
                     
                 return metrics
                     
             except Exception as e:
-                print(f"Error during page load or metric extraction: {e}")
+                logger.error(f"Error during page load or metric extraction: {e}", exc_info=True)
                 
             finally:
                 if 'page' in locals():
@@ -303,7 +303,7 @@ class TwitterRaid(BaseRaid):
                     await context.close()
                     
         except Exception as e:
-            print(f"Error in get_tweet_metrics: {e}")
+            logger.error(f"Error in get_tweet_metrics: {e}", exc_info=True)
             if 'page' in locals():
                 await page.close()
             if 'context' in locals():
@@ -336,7 +336,7 @@ class TwitterRaid(BaseRaid):
         • timeout - minutes until raid auto-ends (default: 15)"""
         if not await self.check_raid_channel(ctx):
             return
-        print(f"raid called with url: {tweet_url} and targets: {targets}")
+        logger.debug(f"raid called with url: {tweet_url} and targets: {targets}")
         
         try:
             # Clean and validate tweet URL
@@ -346,7 +346,7 @@ class TwitterRaid(BaseRaid):
                 return
                 
             tweet_url = tweet_url.group(0).replace('x.com', 'twitter.com')  # Use clean URL
-            print(f"Cleaned URL: {tweet_url}")
+            logger.debug(f"Cleaned URL: {tweet_url}")
 
             # Parse and validate targets
             target_dict = {}
@@ -421,7 +421,7 @@ class TwitterRaid(BaseRaid):
             self.bot.loop.create_task(self.monitor_engagement(ctx.channel, tweet_url, target_dict, timeout_minutes))
             
         except Exception as e:
-            print(f"Error in start_engagement: {e}")
+            logger.error(f"Error in start_engagement: {e}", exc_info=True)
             await ctx.send(f"Error: {str(e)}")
 
     async def create_progress_embed(self, tweet_url, targets, metrics=None):
@@ -473,13 +473,13 @@ class TwitterRaid(BaseRaid):
 
     async def monitor_engagement(self, channel, tweet_url, targets, timeout_minutes):
         start_time = datetime.now(timezone.utc)
-        print(f"Raid started at {start_time} with {timeout_minutes} minute timeout")
+        logger.debug(f"Raid started at {start_time} with {timeout_minutes} minute timeout")
         
         while self.locked_channels.get(channel.id):
             try:
                 current_time = datetime.now(timezone.utc)
                 elapsed_minutes = (current_time - start_time).total_seconds() / 60
-                print(f"Checking timeout: {elapsed_minutes:.2f} minutes elapsed of {timeout_minutes} allowed")
+                logger.debug(f"Checking timeout: {elapsed_minutes:.2f} minutes elapsed of {timeout_minutes} allowed")
             
                 if elapsed_minutes > timeout_minutes:
                     # Calculate progress percentages
@@ -497,7 +497,7 @@ class TwitterRaid(BaseRaid):
                         final_progress=progress_percentages
                     )
 
-                    print(f"Timeout triggered after {elapsed_minutes:.2f} minutes")
+                    logger.debug(f"Timeout triggered after {elapsed_minutes:.2f} minutes")
                 # Check for timeout
                 if (datetime.now(timezone.utc) - start_time).total_seconds() > timeout_minutes * 60:
                     # Unlock channel
@@ -514,7 +514,7 @@ class TwitterRaid(BaseRaid):
                                 lock_message = await channel.fetch_message(challenge_data['lock_message_id'])
                                 await lock_message.delete()
                             except:
-                                print("Couldn't find lock message to delete")
+                                logger.debug("Lock message already deleted")
 
                             message = await channel.fetch_message(challenge_data['message_id'])
                             metrics = await self.get_tweet_metrics(tweet_url)
@@ -537,7 +537,7 @@ class TwitterRaid(BaseRaid):
                             
                             await message.edit(embed=timeout_embed)
                         except:
-                            print("Couldn't find original message for timeout update")
+                            logger.warning("Could not find original message for timeout update")
                     
                     del self.locked_channels[channel.id]
                     del self.engagement_targets[channel.id]
@@ -560,7 +560,7 @@ class TwitterRaid(BaseRaid):
                 try:
                     message = await channel.fetch_message(challenge_data['message_id'])
                 except:
-                    print("Couldn't find original message")
+                    logger.warning("Could not find original message")
                     break
                 
                 # Check if ALL targets are met
@@ -597,7 +597,7 @@ class TwitterRaid(BaseRaid):
                         lock_message = await channel.fetch_message(challenge_data['lock_message_id'])
                         await lock_message.delete()
                     except:
-                        print("Couldn't find lock message to delete")
+                        logger.debug("Couldn't find lock message to delete")
                     # Update progress message with completion
                     final_embed = await self.create_progress_embed(tweet_url, targets, metrics)
                     final_embed.color = 0x00FF00  # Bright green
@@ -625,7 +625,7 @@ class TwitterRaid(BaseRaid):
                     await message.edit(embed=embed)
                 
             except Exception as e:
-                print(f"Error monitoring engagement: {e}")
+                logger.error(f"Error monitoring engagement: {e}", exc_info=True)
             
             await ScrapeUtils.random_delay(30)  # 30 seconds base with jitter
 

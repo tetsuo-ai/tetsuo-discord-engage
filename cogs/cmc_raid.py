@@ -7,6 +7,8 @@ import asyncio
 from playwright.async_api import async_playwright
 import random
 from .scrape_utils import ScrapeUtils
+import logging
+logger = logging.getLogger('tetsuo_bot.cmc_raid')
 
 class CMCRaid(BaseRaid):
     def __init__(self, bot):
@@ -24,9 +26,9 @@ class CMCRaid(BaseRaid):
                     headless=True,
                     args=['--no-sandbox', '--disable-setuid-sandbox']
                 )
-                print("CMC Raid: Playwright browser initialized successfully")
+                logger.info("Playwright browser initialized successfully")
             except Exception as e:
-                print(f"Error initializing Playwright: {e}")
+                logger.error(f"Error initializing Playwright: {e}", exc_info=True)
                 raise e
 
     async def get_metrics(self):
@@ -49,7 +51,7 @@ class CMCRaid(BaseRaid):
             })
 
             try:
-                print(f"Loading CMC metrics")
+                logger.info("Loading CMC metrics")
                 await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
                 
                 # Random initial wait for page load
@@ -81,18 +83,18 @@ class CMCRaid(BaseRaid):
                             await asyncio.sleep(random.uniform(0.2, 0.5))
                             
                         thumb_text = await element.text_content()
-                        print(f"Found upvote count: {thumb_text}")
+                        logger.info(f"Found upvote count: {thumb_text}")
                         try:
                             return int(thumb_text.strip())
                         except ValueError:
-                            print(f"Could not convert value to int: {thumb_text}")
+                            logger.warning(f"Could not convert value to int: {thumb_text}")
                             return 0
                 except Exception as e:
-                    print(f"Error getting upvote count: {e}")
+                    logger.error(f"Error getting upvote count: {e}", exc_info=True)
                     return 0
 
             except Exception as e:
-                print(f"Error during page load: {e}")
+                logger.error(f"Error during page load: {e}", exc_info=True)
                 return 0
                 
             finally:
@@ -102,7 +104,7 @@ class CMCRaid(BaseRaid):
                     await context.close()
                     
         except Exception as e:
-            print(f"Browser error: {e}")
+            logger.error(f"Browser error: {e}", exc_info=True)
             return 0
 
     async def create_progress_embed(self, current_value, target_value):
@@ -202,7 +204,7 @@ class CMCRaid(BaseRaid):
                 await progress_message.edit(embed=progress_embed)
                 
             except Exception as e:
-                print(f"Error monitoring raid: {e}")
+                logger.error(f"Error monitoring raid: {e}", exc_info=True)
             
             # Replace fixed sleep with random delay
             await ScrapeUtils.random_delay(30)
@@ -258,7 +260,7 @@ class CMCRaid(BaseRaid):
             await self.monitor_raid(ctx, target_value, timeout_minutes)
             
         except Exception as e:
-            print(f"Error in raid_cmc: {e}")
+            logger.error(f"Error in raid_cmc: {e}", exc_info=True)
             await ctx.send(f"Error: {str(e)}")
             await self.unlock_channel(ctx.channel)
 

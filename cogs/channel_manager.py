@@ -4,6 +4,8 @@ import os
 from dotenv import load_dotenv
 import asyncio
 from datetime import datetime, timezone, timedelta
+import logging
+logger = logging.getLogger('tetsuo_bot.channel_manager')
 
 class ChannelManager(commands.Cog):
     def __init__(self, bot):
@@ -44,24 +46,24 @@ class ChannelManager(commands.Cog):
                         if message.author.bot:
                             if message_age > (15 * 60):  # 15 minutes in seconds
                                 await message.delete()
-                                print(f"Deleted bot message")
+                                logger.debug("Deleted bot message")
                         # Non-bot messages: Delete if older than 15 minutes
                         else:
                             if message_age > (15 * 60):  # 15 minutes in seconds
                                 await message.delete()
-                                print(f"Deleted user message")
+                                logger.debug("Deleted user message")
                                 
                         # Add a small delay to avoid rate limits
                         await asyncio.sleep(1)
                         
                 except Exception as e:
-                    print(f"Error cleaning messages in raid channel: {e}")
+                    logger.error(f"Error cleaning messages in raid channel: {e}", exc_info=True)
                     
                 # Run cleanup every 5 minutes
                 await asyncio.sleep(30)
                 
             except Exception as e:
-                print(f"Error in cleanup task: {e}")
+                logger.error(f"Error in cleanup task: {e}", exc_info=True)
                 await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
 
     def get_trend_indicator(self, current, previous):
@@ -216,18 +218,18 @@ class ChannelManager(commands.Cog):
                     await message.pin()
                     self.metrics_message_id = message.id
                 except Exception as e:
-                    print(f"Error updating metrics message: {e}")
+                    logger.warning(f"Error updating metrics message: {e}")
                     self.metrics_message_id = None  # Reset ID on error
 
             except Exception as e:
-                print(f"Error in metrics dashboard task: {e}")
+                logger.warning(f"Error in metrics dashboard task: {e}")
 
             # Update every 5 minutes
             await asyncio.sleep(300)
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print('ChannelManager is ready')
+        logger.info('ChannelManager is ready')
         if self.cleanup_task:
             self.cleanup_task.cancel()
         if self.metrics_task:
@@ -235,7 +237,7 @@ class ChannelManager(commands.Cog):
             
         self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
         self.metrics_task = self.bot.loop.create_task(self.update_metrics_dashboard())
-        print('ChannelManager tasks started')
+        logger.info('ChannelManager tasks started')
 
     def cog_unload(self):
         if self.cleanup_task:
@@ -336,7 +338,7 @@ class ChannelManager(commands.Cog):
         except ValueError:
             await ctx.send("❌ Please provide a valid channel ID", delete_after=10)
         except Exception as e:
-            print(f"Error setting raid channel: {e}")
+            logger.error(f"Error setting raid channel: {e}", exc_info=True)
             await ctx.send(f"❌ Error setting raid channel: {str(e)}", delete_after=30)
 
     @commands.command(name='raid_stop')
@@ -366,9 +368,9 @@ class ChannelManager(commands.Cog):
                         if lock_message:
                             await lock_message.delete()
                     except discord.NotFound:
-                        print("Lock message already deleted")
+                        logger.debug("Lock message already deleted")
                     except Exception as e:
-                        print(f"Error deleting lock message: {e}")
+                        logger.error(f"Error deleting lock message: {e}", exc_info=True)
                         
                     try:
                         # Delete progress message
@@ -376,15 +378,15 @@ class ChannelManager(commands.Cog):
                         if progress_message:
                             await progress_message.delete()
                     except discord.NotFound:
-                        print("Progress message already deleted")
+                        logger.debug("Progress message already deleted")
                     except Exception as e:
-                        print(f"Error deleting progress message: {e}")
+                        logger.error(f"Error deleting progress message: {e}", exc_info=True)
 
                 await twitter_raid.unlock_channel(ctx.channel)
                 channel_locked = True
                 
             except Exception as e:
-                print(f"Error in raid_stop (Twitter): {e}")
+                logger.error(f"Error in raid_stop (Twitter): {e}", exc_info=True)
                 
         # Check CMCRaid
         if cmc_raid and ctx.channel.id in cmc_raid.locked_channels:
@@ -397,9 +399,9 @@ class ChannelManager(commands.Cog):
                         if lock_message:
                             await lock_message.delete()
                     except discord.NotFound:
-                        print("Lock message already deleted")
+                        logger.debug("Lock message already deleted")
                     except Exception as e:
-                        print(f"Error deleting lock message: {e}")
+                        logger.error(f"Error deleting lock message: {e}", exc_info=True)
                         
                     try:
                         # Delete progress message
@@ -407,15 +409,15 @@ class ChannelManager(commands.Cog):
                         if progress_message:
                             await progress_message.delete()
                     except discord.NotFound:
-                        print("Progress message already deleted")
+                        logger.debug("Progress message already deleted")
                     except Exception as e:
-                        print(f"Error deleting progress message: {e}")
+                        logger.error(f"Error deleting progress message: {e}", exc_info=True)
 
                 await cmc_raid.unlock_channel(ctx.channel)
                 channel_locked = True
                 
             except Exception as e:
-                print(f"Error in raid_stop (CMC): {e}")
+                logger.error(f"Error in raid_stop (CMC): {e}", exc_info=True)
 
         # Add Gecko check
         if gecko_raid and ctx.channel.id in gecko_raid.locked_channels:
@@ -427,24 +429,24 @@ class ChannelManager(commands.Cog):
                         if lock_message:
                             await lock_message.delete()
                     except discord.NotFound:
-                        print("Lock message already deleted")
+                        logger.debug("Lock message already deleted")
                     except Exception as e:
-                        print(f"Error deleting lock message: {e}")
+                        logger.error(f"Error deleting lock message: {e}", exc_info=True)
                         
                     try:
                         progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
                         if progress_message:
                             await progress_message.delete()
                     except discord.NotFound:
-                        print("Progress message already deleted")
+                        logger.debug("Progress message already deleted")
                     except Exception as e:
-                        print(f"Error deleting progress message: {e}")
+                        logger.error(f"Error deleting progress message: {e}", exc_info=True)
 
                 await gecko_raid.unlock_channel(ctx.channel)
                 channel_locked = True
                 
             except Exception as e:
-                print(f"Error in raid_stop (Gecko): {e}")
+                logger.error(f"Error in raid_stop (Gecko): {e}", exc_info=True)
 
         # Add GMGN check
         if gmgn_raid and ctx.channel.id in gmgn_raid.locked_channels:
@@ -456,24 +458,24 @@ class ChannelManager(commands.Cog):
                         if lock_message:
                             await lock_message.delete()
                     except discord.NotFound:
-                        print("Lock message already deleted")
+                        logger.debug("Lock message already deleted")
                     except Exception as e:
-                        print(f"Error deleting lock message: {e}")
+                        logger.error(f"Error deleting lock message: {e}", exc_info=True)
                         
                     try:
                         progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
                         if progress_message:
                             await progress_message.delete()
                     except discord.NotFound:
-                        print("Progress message already deleted")
+                        logger.debug("Progress message already deleted")
                     except Exception as e:
-                        print(f"Error deleting progress message: {e}")
+                        logger.error(f"Error deleting progress message: {e}", exc_info=True)
 
                 await gmgn_raid.unlock_channel(ctx.channel)
                 channel_locked = True
                 
             except Exception as e:
-                print(f"Error in raid_stop (GMGN): {e}")
+                logger.error(f"Error in raid_stop (GMGN): {e}", exc_info=True)
 
         # Add Dextools check
         if dextools_raid and ctx.channel.id in dextools_raid.locked_channels:
@@ -485,24 +487,24 @@ class ChannelManager(commands.Cog):
                         if lock_message:
                             await lock_message.delete()
                     except discord.NotFound:
-                        print("Lock message already deleted")
+                        logger.debug("Lock message already deleted")
                     except Exception as e:
-                        print(f"Error deleting lock message: {e}")
+                        logger.error(f"Error deleting lock message: {e}", exc_info=True)
                         
                     try:
                         progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
                         if progress_message:
                             await progress_message.delete()
                     except discord.NotFound:
-                        print("Progress message already deleted")
+                        logger.debug("Progress message already deleted")
                     except Exception as e:
-                        print(f"Error deleting progress message: {e}")
+                        logger.error(f"Error deleting progress message: {e}", exc_info=True)
 
                 await dextools_raid.unlock_channel(ctx.channel)
                 channel_locked = True
                 
             except Exception as e:
-                print(f"Error in raid_stop (Dextools): {e}")
+                logger.error(f"Error in raid_stop (Dextools): {e}", exc_info=True)
 
         if channel_locked:
             await ctx.send("Challenge ended manually. Channel unlocked!", delete_after=5)
