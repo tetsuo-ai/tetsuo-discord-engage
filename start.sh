@@ -1,3 +1,3 @@
 #!/bin/bash
 source .venv/bin/activate
-python main.py
+exec python -m main.py

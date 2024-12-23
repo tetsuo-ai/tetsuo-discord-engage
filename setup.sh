@@ -47,7 +47,7 @@ echo -e "${YELLOW}Creating start script...${NC}"
 cat > start.sh << 'EOL'
 #!/bin/bash
 source .venv/bin/activate
-python main.py
+exec python -m main.py
 EOL
 
 # Make start script executable
