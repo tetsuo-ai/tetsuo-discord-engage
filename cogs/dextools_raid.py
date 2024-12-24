@@ -88,6 +88,7 @@ class DextoolsRaid(BaseRaid):
                     try:
                         # Strip the % and whitespace, convert to float
                         value = float(text.strip().rstrip('%'))
+                        logger.info(f"Found sentiment value: {value}%")
                         return value
                     except ValueError:
                         logger.warning(f"Could not convert '{text}' to float")
