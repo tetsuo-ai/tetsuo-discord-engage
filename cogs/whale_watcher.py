@@ -205,6 +205,10 @@ class WhaleMonitor(commands.Cog):
         }
     
     async def send_whale_alert(self, transaction, usd_value, price_usd, amount_tokens, price_impact, trade_time):
+        # Ensure trade_time is timezone-aware - ADD THIS AT THE START
+        if trade_time.tzinfo is None:
+            trade_time = trade_time.replace(tzinfo=timezone.utc)
+        
         """Send whale alert to Discord"""
         if not self.alert_channel_id:
             logger.warning("No alert channel configured")
