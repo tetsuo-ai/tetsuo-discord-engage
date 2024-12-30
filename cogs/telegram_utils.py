@@ -147,7 +147,7 @@ class TelegramMessenger:
                 # Log successful update
                 logger.info(f"Successfully updated Telegram message. Message ID: {self.current_message_id}")
             
-            except telegram.error.BadRequest as e:
+            except telegram_error.BadRequest as e:
                 if "message is not modified" in str(e).lower():
                     # This is normal - message hasn't changed
                     logger.debug("Telegram message unchanged - skipping update")
