@@ -1,5 +1,6 @@
 from telegram.ext import ApplicationBuilder
 from telegram import ChatPermissions
+from telegram import error as telegram_error
 import logging
 
 logger = logging.getLogger('tetsuo_bot.telegram_utils')
