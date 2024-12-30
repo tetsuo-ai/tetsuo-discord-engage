@@ -153,12 +153,12 @@ class TelegramMessenger:
                     return True  # Return success since this is expected behavior
                 elif "message not found" in str(e).lower():
                     # Log if message seems to have disappeared
-                    logger.warning(f"Message with ID {self.current_message_id} not found. Clearing current message ID.")
+                    logger.debug(f"Message with ID {self.current_message_id} not found. Clearing current message ID.")
                     self.current_message_id = None
                     return False
                 else:
                     # Log any other BadRequest errors
-                    logger.error(f"Unexpected BadRequest error updating Telegram message: {e}")
+                    logger.debug(f"Unexpected BadRequest error updating Telegram message: {e}")
                     return False
             except Exception as e:
                 # Log any other unexpected errors
