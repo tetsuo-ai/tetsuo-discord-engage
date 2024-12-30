@@ -1,84 +1,102 @@
 import discord
 from discord.ext import commands
 import asyncio
-import aiohttp
+import json
 import os
 from datetime import datetime, timezone
-from dotenv import load_dotenv
+from pathlib import Path
+import websockets
+from typing import Optional, Dict, Any
 import logging
+from pydantic import BaseModel
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+
 logger = logging.getLogger('tetsuo_bot.whale_watcher')
+
+class BotConfig(BaseModel):
+    channel_id: Optional[int] = None
+    min_threshold: int = 5000
+    notifications_enabled: bool = True
+
+    @classmethod
+    def load(cls) -> 'BotConfig':
+        config_path = Path("discord_whale_config.json")
+        if config_path.exists():
+            return cls.parse_raw(config_path.read_text())
+        return cls()
+
+    def save(self):
+        config_path = Path("discord_whale_config.json")
+        config_path.write_text(self.model_dump_json(indent=2))
+
+class Settings(BaseSettings):
+    """Discord bot whale watcher settings"""
+    API_URL: str = "http://localhost:8080"
+    WS_URL: str = "ws://localhost:8080/ws"
+    
+    class Config:
+        env_file = ".env"
+        env_file_encoding = 'utf-8'
+        extra = 'allow'
+
+@lru_cache()
+def get_settings() -> Settings:
+    """Get cached settings instance"""
+    return Settings()
 
 class WhaleMonitor(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.session = None
-        self.pool_address = "2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6"
-        self.min_usd_threshold = 1000
-        self.monitor_task = None
+        self.config = BotConfig.load()
+        self.settings = get_settings()
+        self._ws_task = None
         self.cleanup_task = None
-        self.alert_channel_id = int(os.getenv('WHALE_ALERT_CHANNEL', 0))
-        self.headers = {
-            'accept': 'application/json;version=20230302',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        self.api_url = f"https://api.geckoterminal.com/api/v2/networks/solana/pools/{self.pool_address}/trades"
-        self.seen_transactions = {}
-        self.bot_start_time = None
 
     async def cleanup_messages(self):
         """Keep only the most recent 200 messages in the whale alert channel"""
         while True:
             try:
-                # Explicitly check if we have a designated channel
-                if not self.alert_channel_id:
+                if not self.config.channel_id:
                     await asyncio.sleep(60)
                     continue
                     
-                channel = self.bot.get_channel(self.alert_channel_id)
+                channel = self.bot.get_channel(self.config.channel_id)
                 if not channel:
                     await asyncio.sleep(60)
                     continue
 
-                # Double-check we're in the right channel before doing any cleanup
                 if not isinstance(channel, discord.TextChannel):
                     logger.warning("Whale alert channel is not a text channel")
                     await asyncio.sleep(60)
                     continue
 
-                # Get messages only from the designated channel
                 messages = []
                 async for message in channel.history(limit=None):
-                    if message.channel.id != self.alert_channel_id:
+                    if message.channel.id != self.config.channel_id:
                         continue
                         
-                    # Skip pinned messages
                     if message.pinned:
                         continue
                     messages.append(message)
                 
-                # If we have more than 200 messages, delete the oldest ones
                 if len(messages) > 200:
-                    # Sort by timestamp, newest first
                     messages.sort(key=lambda x: x.created_at, reverse=True)
                     
-                    # Delete messages after the first 200
                     deleted_count = 0
                     for message in messages[200:]:
                         try:
-                            # One final channel check before deletion
-                            if message.channel.id == self.alert_channel_id:
+                            if message.channel.id == self.config.channel_id:
                                 await message.delete()
                                 deleted_count += 1
-                                # Small delay to avoid rate limits
                                 await asyncio.sleep(1)
                         except Exception as e:
-                            logger.error(f"Error deleting message in whale channel: {e}", exc_info=True)
+                            logger.error(f"Error deleting message: {e}", exc_info=True)
                             continue
                     
                     if deleted_count > 0:
                         logger.info(f"Cleaned up {deleted_count} messages from whale alert channel")
                 
-                # Run cleanup every 5 minutes
                 await asyncio.sleep(300)
                     
             except Exception as e:
@@ -86,142 +104,62 @@ class WhaleMonitor(commands.Cog):
                 await asyncio.sleep(60)
 
     async def start_monitoring(self):
-        """Monitor trades with proper rate limiting"""
-        if not self.session:
-            self.session = aiohttp.ClientSession(headers=self.headers)
-
-        # Set the bot start time on first run with UTC timezone
-        if self.bot_start_time is None:
-            self.bot_start_time = datetime.now(timezone.utc)
-            logger.info(f"Whale Monitor: Initialized at {self.bot_start_time}")
-
-        # Track our API calls
-        request_times = []
-        
+        """Monitor whale alerts via WebSocket"""
         while True:
             try:
-                if not self.alert_channel_id:
-                    await asyncio.sleep(30)
-                    continue
-
-                # Clean up old request timestamps
-                current_time = datetime.now(timezone.utc)
-                request_times = [t for t in request_times 
-                            if (current_time - t).total_seconds() < 60]
-
-                # Check if we're about to exceed rate limit
-                if len(request_times) >= 30:
-                    # Wait until oldest request is more than 60s old
-                    wait_time = 60 - (current_time - request_times[0]).total_seconds()
-                    if wait_time > 0:
-                        logger.info(f"Rate limit approaching, waiting {wait_time:.1f}s")
-                        await asyncio.sleep(wait_time)
-                    continue
-
-                params = {
-                    'trade_volume_in_usd_greater_than': self.min_usd_threshold
-                }
-
-                request_times.append(current_time)
-
-                async with self.session.get(self.api_url, params=params) as response:
-                    if response.status == 429:  # Rate limit
-                        retry_after = int(response.headers.get('Retry-After', 30))
-                        logger.warning(f"Rate limited, waiting {retry_after}s")
-                        await asyncio.sleep(retry_after)
-                        continue
-                        
-                    if response.status != 200:
-                        logger.error(f"API error: {response.status}")
-                        await asyncio.sleep(30)
-                        continue
-
-                    data = await response.json()
-                    await self.process_trades(data)
-
-                # Fixed 2-second interval between requests
-                await asyncio.sleep(2)
-
-            except aiohttp.ClientError as e:
-                logger.error(f"Connection error: {e}", exc_info=True)
-                await asyncio.sleep(30)
+                async with websockets.connect(self.settings.WS_URL) as ws:
+                    logger.info("WebSocket connected to whale alert service")
+                    
+                    while True:
+                        try:
+                            message = await ws.recv()
+                            data = json.loads(message)
+                            
+                            if data.get('event_type') == 'new_whale':
+                                logger.info("New whale event received!")
+                                await self.handle_whale_alert(data['data'])
+                                
+                        except websockets.ConnectionClosed:
+                            logger.warning("WebSocket connection closed")
+                            break
+                        except json.JSONDecodeError as je:
+                            logger.error(f"JSON decode error: {je}")
+                        except Exception as e:
+                            logger.error(f"WebSocket message processing error: {e}")
+                            
             except Exception as e:
-                logger.error(f"Monitoring error: {e}", exc_info=True)
-                await asyncio.sleep(30)
+                logger.error(f"WebSocket connection error: {e}")
+                
+            if not self.bot.is_closed():
+                await asyncio.sleep(5)
+            else:
+                break
 
-    async def process_trades(self, data):
-        """Process new trades from the API"""
-        if 'data' not in data or not data['data']:
+    async def handle_whale_alert(self, data: Dict[str, Any]):
+        """Process and send whale alert to Discord"""
+        if not self.config.channel_id:
+            logger.warning("No channel ID configured")
             return
-
-        current_time = datetime.now(timezone.utc)
-
-        for trade in data['data']:
-            try:
-                attrs = trade['attributes']
-                tx_hash = attrs['tx_hash']
-                
-                # Parse the trade timestamp with proper timezone handling
-                trade_time = datetime.fromisoformat(attrs['block_timestamp'].replace('Z', '+00:00'))
-                
-                # Skip if trade happened before bot start
-                if trade_time < self.bot_start_time:
-                    continue
-
-                # Skip if we've already seen this transaction
-                if tx_hash in self.seen_transactions:
-                    continue
-
-                # Skip non-buys
-                if attrs['kind'] != 'buy':
-                    continue
-
-                # Verify the trade meets our minimum threshold
-                usd_value = float(attrs['volume_in_usd'])
-                if usd_value < self.min_usd_threshold:
-                    continue
-
-                # Add to seen transactions
-                self.seen_transactions[tx_hash] = current_time
-
-                await self.send_whale_alert(
-                    transaction=tx_hash,
-                    usd_value=usd_value,
-                    price_usd=float(attrs['price_to_in_usd']),
-                    amount_tokens=float(attrs['to_token_amount']),
-                    price_impact=0,
-                    trade_time=trade_time  # Add timestamp to the call
-                )
-
-            except Exception as e:
-                logger.error(f"Error processing trade: {e}", exc_info=True)
-                continue
-
-        # Clean up old transactions (older than 1 hour)
-        self.seen_transactions = {
-            hash: time 
-            for hash, time in self.seen_transactions.items()
-            if (current_time - time).total_seconds() < 3600
-        }
-    
-    async def send_whale_alert(self, transaction, usd_value, price_usd, amount_tokens, price_impact, trade_time):
-        # Ensure trade_time is timezone-aware - ADD THIS AT THE START
-        if trade_time.tzinfo is None:
-            trade_time = trade_time.replace(tzinfo=timezone.utc)
-        
-        """Send whale alert to Discord"""
-        if not self.alert_channel_id:
-            logger.warning("No alert channel configured")
+            
+        if not self.config.notifications_enabled:
+            logger.info("Notifications are disabled")
             return
-                
-        channel = self.bot.get_channel(self.alert_channel_id)
+            
+        channel = self.bot.get_channel(self.config.channel_id)
         if not channel:
-            logger.error(f"Could not find channel with ID: {self.alert_channel_id}")
+            logger.error(f"Could not find channel with ID: {self.config.channel_id}")
             return
 
-        logger.info(f"Sending whale alert for ${usd_value:,.2f}")
+        transaction = data['transaction']
+        if transaction['amount_usd'] < self.config.min_threshold:
+            logger.info(f"Transaction below threshold: ${transaction['amount_usd']} < ${self.config.min_threshold}")
+            return
 
-       # Get appropriate GIF based on size (Using image/gif links as placeholders)
+        alert = data['alert']
+        token_stats = data.get('token_stats', {})
+
+        # Determine alert type based on size
+        usd_value = transaction['amount_usd']
         if usd_value >= 50000:
             title = "🐋 ABSOLUTELY MASSIVE WHALE ALERT! 🐋"
             excitement = "HOLY MOTHER OF ALL WHALES!"
@@ -243,33 +181,47 @@ class WhaleMonitor(commands.Cog):
             excitement = "Every shark starts somewhere!"
             gif_url = "https://media1.tenor.com/m/x-rwdPINKUYAAAAd/tuna-guitar.gif"
 
-        # Remove emoji wall entirely since we'll use GIF
         embed = discord.Embed(
             title=title,
             description=excitement,
             color=0x00ff00,
-            timestamp=trade_time
+            timestamp=datetime.now(timezone.utc)
         )
         
-        embed.set_image(url=gif_url)  # For full-width GIF
+        embed.set_image(url=gif_url)
 
-        # Keep all values on one line
-        info_line = f"💰 ${usd_value:,.2f} • 🎯 ${price_usd:.6f} • 📊 {amount_tokens:,.0f} TETSUO"
+        info_line = (
+            f"💰 ${transaction['amount_usd']:,.2f} • "
+            f"🎯 ${transaction['price_usd']:.6f} • "
+            f"📊 {transaction['amount_tokens']:,.0f} TETSUO"
+        )
         embed.add_field(
             name="Transaction Details",
             value=info_line,
             inline=False
         )
 
+        if token_stats:
+            market_stats = (
+                f"📈 24h Volume: ${float(token_stats.get('volume_24h', 0)):,.2f}\n"
+                f"💎 Market Cap: ${float(token_stats.get('market_cap', 0)):,.2f}\n"
+                f"💵 Current Price: ${float(token_stats.get('price_usd', 0)):,.8f}"
+            )
+            embed.add_field(
+                name="Market Stats",
+                value=market_stats,
+                inline=False
+            )
+
         embed.add_field(
             name="🔍 Transaction",
-            value=f"[View on Solscan](https://solscan.io/tx/{transaction})",
+            value=f"[View on Solscan](https://solscan.io/tx/{transaction['transaction_hash']})",
             inline=False
         )
 
         try:
             await channel.send(embed=embed)
-            logger.info(f"Successfully sent alert for tx: {transaction}")
+            logger.info(f"Successfully sent alert for tx: {transaction['transaction_hash']}")
         except Exception as e:
             logger.error(f"Error sending whale alert: {e}", exc_info=True)
 
@@ -278,34 +230,25 @@ class WhaleMonitor(commands.Cog):
     async def set_whale_channel(self, ctx, channel_id: str):
         """Set the whale alert channel by ID"""
         try:
-            self.alert_channel_id = int(channel_id)
+            channel_id = int(channel_id)
+            channel = self.bot.get_channel(channel_id)
             
-            # Update environment
-            env_path = '.env'
-            existing_lines = []
-            updated = False
-            
-            if os.path.exists(env_path):
-                with open(env_path, 'r') as file:
-                    existing_lines = file.readlines()
-                    
-                for i, line in enumerate(existing_lines):
-                    if line.strip().startswith('WHALE_ALERT_CHANNEL='):
-                        existing_lines[i] = f'WHALE_ALERT_CHANNEL={channel_id}\n'
-                        updated = True
-                        break
+            if not channel:
+                await ctx.send("❌ Could not find channel with that ID", delete_after=10)
+                return
                 
-                if not updated:
-                    existing_lines.append(f'WHALE_ALERT_CHANNEL={channel_id}\n')
-            else:
-                existing_lines = [f'WHALE_ALERT_CHANNEL={channel_id}\n']
+            if not isinstance(channel, discord.TextChannel):
+                await ctx.send("❌ That is not a text channel", delete_after=10)
+                return
             
-            with open(env_path, 'w') as file:
-                file.writelines(existing_lines)
+            self.config.channel_id = channel_id
+            self.config.save()
             
-            os.environ['WHALE_ALERT_CHANNEL'] = channel_id
-            
-            await ctx.send(f"✅ Channel ID {channel_id} has been set for whale alerts.\nMonitoring buys above ${self.min_usd_threshold:,}", delete_after=30)
+            await ctx.send(
+                f"✅ Channel ID {channel_id} has been set for whale alerts.\n"
+                f"Monitoring buys above ${self.config.min_threshold:,}", 
+                delete_after=30
+            )
             
         except ValueError:
             await ctx.send("❌ Please provide a valid channel ID", delete_after=10)
@@ -321,15 +264,17 @@ class WhaleMonitor(commands.Cog):
         Usage: !set_whale_minimum <amount>
         Example: !set_whale_minimum 15000"""
         
-        if amount < 1000:  # Prevent silly low values
+        if amount < 1000:
             await ctx.send("❌ Minimum value must be at least $1,000", delete_after=10)
             return
             
-        if amount > 1000000:  # Prevent absurdly high values
+        if amount > 1000000:
             await ctx.send("❌ Minimum value cannot exceed $1,000,000", delete_after=10)
             return
             
-        self.min_usd_threshold = amount
+        self.config.min_threshold = amount
+        self.config.save()
+        
         await ctx.send(
             f"✅ Whale alert minimum set to ${amount:,}\n"
             f"Now monitoring TETSUO buys above this value.",
@@ -340,13 +285,21 @@ class WhaleMonitor(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def whale_channel(self, ctx):
         """Display information about the current whale alert channel"""
-        if not self.alert_channel_id:
-            await ctx.send("❌ No whale alert channel has been set! An administrator must use !set_whale_channel to configure one.", delete_after=30)
+        if not self.config.channel_id:
+            await ctx.send(
+                "❌ No whale alert channel has been set! "
+                "An administrator must use !set_whale_channel to configure one.", 
+                delete_after=30
+            )
             return
             
-        channel = self.bot.get_channel(self.alert_channel_id)
+        channel = self.bot.get_channel(self.config.channel_id)
         if not channel:
-            await ctx.send("⚠️ Configured whale alert channel not found! The channel may have been deleted.", delete_after=30)
+            await ctx.send(
+                "⚠️ Configured whale alert channel not found! "
+                "The channel may have been deleted.", 
+                delete_after=30
+            )
             return
             
         embed = discord.Embed(
@@ -362,20 +315,26 @@ class WhaleMonitor(commands.Cog):
         
         embed.add_field(
             name="Minimum Buy Size",
-            value=f"${self.min_usd_threshold:,}",
+            value=f"${self.config.min_threshold:,}",
             inline=False
         )
         
-        if ctx.channel.id == self.alert_channel_id:
+        embed.add_field(
+            name="Status",
+            value="✅ Alerts are enabled" if self.config.notifications_enabled else "⛔ Alerts are disabled",
+            inline=False
+        )
+        
+        if ctx.channel.id == self.config.channel_id:
             embed.add_field(
-                name="Status",
+                name="Current Channel",
                 value="✅ You are in the whale alert channel",
                 inline=False
             )
         else:
             embed.add_field(
-                name="Status",
-                value=f"ℹ️ Whale alerts go to <#{self.alert_channel_id}>",
+                name="Current Channel",
+                value=f"ℹ️ Whale alerts go to <#{self.config.channel_id}>",
                 inline=False
             )
             
@@ -384,21 +343,19 @@ class WhaleMonitor(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         """Start monitoring when bot is ready"""
-        if not self.monitor_task:
-            self.monitor_task = self.bot.loop.create_task(self.start_monitoring())
-            logger.info("Whale Monitor: Started monitoring buys")
+        if not self._ws_task:
+            self._ws_task = self.bot.loop.create_task(self.start_monitoring())
+            logger.info("Whale Monitor: Started monitoring")
         if not self.cleanup_task:
             self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
             logger.info("Whale Monitor: Started channel cleanup task")
 
     def cog_unload(self):
         """Cleanup when cog is unloaded"""
-        if self.monitor_task:
-            self.monitor_task.cancel()
+        if self._ws_task:
+            self._ws_task.cancel()
         if self.cleanup_task:
             self.cleanup_task.cancel()
-        if self.session and not self.session.closed:
-            asyncio.create_task(self.session.close())
 
 async def setup(bot):
     await bot.add_cog(WhaleMonitor(bot))
