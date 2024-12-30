@@ -1,3 +1,4 @@
 discord.py
 python-dotenv
 playwright
+python-telegram-bot>=20.7

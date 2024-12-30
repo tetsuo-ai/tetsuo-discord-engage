@@ -1,6 +1,7 @@
 from .base_raid import BaseRaid
 import discord
 from discord.ext import commands
+from .telegram_utils import TelegramMessenger
 import asyncio
 from datetime import datetime, timezone, timedelta
 import os
@@ -23,6 +24,23 @@ class TwitterRaid(BaseRaid):
         self.history_file = 'raid_history.json'
         self.load_raid_history()
         self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
+        self.telegram = TelegramMessenger(
+            os.getenv('TELEGRAM_BOT_TOKEN'),
+            os.getenv('TELEGRAM_CHAT_ID')
+        )
+    
+    async def setup_initial(self):
+        """Initialize both Playwright and Telegram when cog is loaded"""
+        try:
+            await self.setup_playwright()
+            if not await self.telegram.initialize():
+                logger.error("Failed to initialize Telegram")
+                return False
+            logger.info("TwitterRaid: All components initialized successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error during TwitterRaid initialization: {e}", exc_info=True)
+            return False
 
     def load_raid_history(self):
         try:
@@ -151,6 +169,7 @@ class TwitterRaid(BaseRaid):
     def cog_unload(self):
         if self.browser:
             asyncio.create_task(self.browser.close())
+        asyncio.create_task(self.telegram.cleanup())
         self.raid_history.clear()
 
     async def setup_playwright(self):
@@ -387,6 +406,9 @@ class TwitterRaid(BaseRaid):
                 await ctx.send("There's already an active raid in this channel!")
                 return
             
+            # Get initial metrics once
+            initial_metrics = await self.get_tweet_metrics(tweet_url)
+
             # Lock the channel
             overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
             overwrites.send_messages = False
@@ -402,10 +424,14 @@ class TwitterRaid(BaseRaid):
             )
             lock_embed.set_footer(text="Channel will automatically unlock when targets are reached")
             lock_message = await ctx.send(embed=lock_embed)
-            
-            # Send challenge message and store it
-            embed = await self.create_progress_embed(tweet_url, target_dict)
+
+            # Send Discord challenge message and store it 
+            embed = await self.create_progress_embed(tweet_url, target_dict, initial_metrics)
             challenge_message = await ctx.send(embed=embed)
+
+            # Send initial Telegram message with metrics
+            await self.telegram.lock_chat()
+            await self.telegram.send_raid_message(tweet_url, target_dict, initial_metrics)
             
             self.engagement_targets[ctx.channel.id] = {
                 'tweet_url': tweet_url,
@@ -429,8 +455,7 @@ class TwitterRaid(BaseRaid):
             metrics = await self.get_tweet_metrics(tweet_url)
             
         embed = discord.Embed(
-            title="🎯 Community Engagement Challenge",
-            description="Help support our community by engaging with this post!",
+            title="🎯 Community Engagement Challenge 🎯",
             color=0x1DA1F2
         )
         
@@ -474,14 +499,16 @@ class TwitterRaid(BaseRaid):
     async def monitor_engagement(self, channel, tweet_url, targets, timeout_minutes):
         start_time = datetime.now(timezone.utc)
         logger.debug(f"Raid started at {start_time} with {timeout_minutes} minute timeout")
-        
+        # Get initial metrics
+        metrics = await self.get_tweet_metrics(tweet_url)
+
         while self.locked_channels.get(channel.id):
             try:
                 current_time = datetime.now(timezone.utc)
                 elapsed_minutes = (current_time - start_time).total_seconds() / 60
                 logger.debug(f"Checking timeout: {elapsed_minutes:.2f} minutes elapsed of {timeout_minutes} allowed")
             
-                if elapsed_minutes > timeout_minutes:
+                if (datetime.now(timezone.utc) - start_time).total_seconds() > timeout_minutes * 60:
                     # Calculate progress percentages
                     progress_percentages = {
                         metric: (metrics.get(metric, 0) / target * 100) if target > 0 else 100 
@@ -587,10 +614,13 @@ class TwitterRaid(BaseRaid):
                         final_progress=progress_percentages
                     )
 
+                    await self.telegram.update_progress(metrics, targets, tweet_url)
+
                     # Unlock channel
                     overwrites = channel.overwrites_for(channel.guild.default_role)
                     overwrites.send_messages = True
                     await channel.set_permissions(channel.guild.default_role, overwrite=overwrites)
+                    await self.telegram.unlock_chat()
                     
                     # Delete lock message
                     try:
@@ -623,9 +653,24 @@ class TwitterRaid(BaseRaid):
                     # Update progress
                     embed = await self.create_progress_embed(tweet_url, targets, metrics)
                     await message.edit(embed=embed)
+                    
+                    # Update Telegram progress
+                    await self.telegram.update_progress(metrics, targets, tweet_url)
+                
                 
             except Exception as e:
                 logger.error(f"Error monitoring engagement: {e}", exc_info=True)
+            
+            finally:
+                # Ensure both platforms get unlocked no matter what
+                try:
+                    await self.unlock_channel(channel)
+                except Exception as e:
+                    logger.error(f"Error unlocking Discord channel: {e}")
+                try:
+                    await self.telegram.unlock_chat()
+                except Exception as e:
+                    logger.error(f"Error unlocking Telegram chat: {e}")
             
             await ScrapeUtils.random_delay(30)  # 30 seconds base with jitter
 
@@ -634,4 +679,8 @@ class TwitterRaid(BaseRaid):
             asyncio.create_task(self.browser.close())
 
 async def setup(bot):
-    await bot.add_cog(TwitterRaid(bot))
+    cog = TwitterRaid(bot)
+    if not await cog.setup_initial():  # Add this method
+        logger.error("Failed to initialize TwitterRaid cog")
+        return
+    await bot.add_cog(cog)

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import signal
 from dotenv import load_dotenv
 import discord
 from discord.ext import commands
@@ -46,8 +47,34 @@ logger = logging.getLogger('tetsuo_bot')
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
 
+async def shutdown(signal, bot):
+    """Cleanup tasks tied to the service's shutdown."""
+    logger.info(f"Received exit signal {signal.name}...")
+    
+    # Close the Discord bot connection first
+    try:
+        logger.info("Closing Discord connection...")
+        await bot.close()
+    except Exception as e:
+        logger.error(f"Error closing Discord connection: {e}")
+
+    # Then cancel any remaining tasks
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if tasks:
+        logger.info(f"Cancelling {len(tasks)} outstanding tasks")
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
+    logger.info("Shutdown complete.")
+
 async def main():
     logger.info("Starting bot initialization...")
+    
+    # Set up signal handlers
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s, bot)))
     
     intents = discord.Intents.default()
     intents.message_content = True
@@ -118,5 +145,11 @@ async def main():
         logger.exception(f"Error starting bot: {e}")
         raise e
 
-logger.info("Script starting...")
-asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        logger.info("Script starting...")
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, shutting down...")
+    finally:
+        logger.info("Bot shutdown complete.")

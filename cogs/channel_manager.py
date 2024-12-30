@@ -382,7 +382,17 @@ class ChannelManager(commands.Cog):
                     except Exception as e:
                         logger.error(f"Error deleting progress message: {e}", exc_info=True)
 
+                # Unlock Discord Channel
                 await twitter_raid.unlock_channel(ctx.channel)
+
+                # Unlock Telegram chat and delete message
+                try:
+                    if twitter_raid.telegram.current_message_id:
+                        await twitter_raid.telegram.delete_message(twitter_raid.telegram.current_message_id)
+                    await twitter_raid.telegram.unlock_chat()
+                except Exception as e:
+                    logger.error(f"Error cleaning up Telegram: {e}", exc_info=True)
+
                 channel_locked = True
                 
             except Exception as e:
