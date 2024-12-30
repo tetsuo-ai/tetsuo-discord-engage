@@ -126,29 +126,55 @@ class TwitterRaid(BaseRaid):
         summary = "📊 **RAID PERFORMANCE SUMMARY (24h)**\n"
         summary += f"> Total Raids: {total_raids} | Successful: {successful_raids} | "
         summary += f"Timeouts: {total_raids - successful_raids}\n\n"
-        summary += "**RECENT RAIDS:**\n"
-
-        # Add individual raid entries (most recent first)
-        for raid in sorted(self.raid_history, key=lambda x: x['timestamp'], reverse=True):
-            time_ago = self.format_time_ago(raid['timestamp'])
-            status = "✅ SUCCESS - All targets met" if raid['success'] else "❌ TIMEOUT"
+        
+        if total_raids > 0:
+            summary += "**RECENT RAIDS:**\n"
             
-            if raid['progress']:
-                progress_str = f" - Reached {max(raid['progress'].values()):.0f}% of targets"
-                status += progress_str if not raid['success'] else ""
+            # Show only the 10 most recent raids
+            recent_raids = sorted(self.raid_history, key=lambda x: x['timestamp'], reverse=True)[:10]
+            shown_raids = len(recent_raids)
             
-            summary += f"> 🔗 <{raid['tweet_url']}>\n"
-            summary += f"> {status}\n"
-            summary += f"> ⏰ Duration: {raid['duration']:.0f} minutes\n"
-            summary += f"> 🕒 {time_ago}\n"
-            summary += "\n"
+            for raid in recent_raids:
+                time_ago = self.format_time_ago(raid['timestamp'])
+                status = "✅ SUCCESS" if raid['success'] else "❌ TIMEOUT"
+                
+                if not raid['success'] and raid['progress']:
+                    status += f" ({max(raid['progress'].values()):.0f}%)"
+                
+                # Truncate URL if needed
+                url = raid['tweet_url']
+                if len(url) > 60:  # Arbitrary length that looks good
+                    url = url[:57] + "..."
+                
+                summary += f"> 🔗 {url}\n"
+                summary += f"> {status} • {raid['duration']:.0f}m • {time_ago}\n"
+                summary += "\n"
+            
+            # Add note about additional raids if any were omitted
+            if shown_raids < total_raids:
+                summary += f"*...and {total_raids - shown_raids} more raids in the last 24h*"
 
         # Update or create pinned message
-        if existing_summary:
-            await existing_summary.edit(content=summary)
-        else:
-            new_summary = await channel.send(summary)
-            await new_summary.pin()
+        try:
+            if existing_summary:
+                await existing_summary.edit(content=summary)
+            else:
+                new_summary = await channel.send(summary)
+                await new_summary.pin()
+        except discord.errors.HTTPException as e:
+            logger.error(f"Failed to update raid summary (len={len(summary)}): {e}")
+            # Fallback to a more compact format if still too long
+            if "Must be 4000 or fewer in length" in str(e):
+                compact_summary = f"📊 **RAID PERFORMANCE SUMMARY (24h)**\n"
+                compact_summary += f"> Total Raids: {total_raids} | Successful: {successful_raids} | "
+                compact_summary += f"Timeouts: {total_raids - successful_raids}\n\n"
+                compact_summary += "*Summary truncated due to length. Check raid history for details.*"
+                
+                if existing_summary:
+                    await existing_summary.edit(content=compact_summary)
+                else:
+                    new_summary = await channel.send(compact_summary)
+                    await new_summary.pin()
 
     def format_time_ago(self, timestamp):
         delta = datetime.now(timezone.utc) - timestamp
@@ -531,6 +557,7 @@ class TwitterRaid(BaseRaid):
                     overwrites = channel.overwrites_for(channel.guild.default_role)
                     overwrites.send_messages = True
                     await channel.set_permissions(channel.guild.default_role, overwrite=overwrites)
+                    await self.telegram.unlock_chat()
                     
                     # Get the original message
                     challenge_data = self.engagement_targets.get(channel.id)
@@ -660,17 +687,6 @@ class TwitterRaid(BaseRaid):
                 
             except Exception as e:
                 logger.error(f"Error monitoring engagement: {e}", exc_info=True)
-            
-            finally:
-                # Ensure both platforms get unlocked no matter what
-                try:
-                    await self.unlock_channel(channel)
-                except Exception as e:
-                    logger.error(f"Error unlocking Discord channel: {e}")
-                try:
-                    await self.telegram.unlock_chat()
-                except Exception as e:
-                    logger.error(f"Error unlocking Telegram chat: {e}")
             
             await ScrapeUtils.random_delay(30)  # 30 seconds base with jitter
 
