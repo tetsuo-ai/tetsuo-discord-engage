@@ -146,18 +146,24 @@ class TelegramMessenger:
                 # Log successful update
                 logger.info(f"Successfully updated Telegram message. Message ID: {self.current_message_id}")
             
-            except Exception as e:
+            except telegram.error.BadRequest as e:
                 if "message is not modified" in str(e).lower():
                     # This is normal - message hasn't changed
                     logger.debug("Telegram message unchanged - skipping update")
-                    return
+                    return True  # Return success since this is expected behavior
                 elif "message not found" in str(e).lower():
                     # Log if message seems to have disappeared
                     logger.warning(f"Message with ID {self.current_message_id} not found. Clearing current message ID.")
                     self.current_message_id = None
+                    return False
                 else:
-                    # Log any other unexpected errors
-                    logger.error(f"Unexpected error updating Telegram message: {e}")
+                    # Log any other BadRequest errors
+                    logger.error(f"Unexpected BadRequest error updating Telegram message: {e}")
+                    return False
+            except Exception as e:
+                # Log any other unexpected errors
+                logger.error(f"Unexpected error updating Telegram message: {e}")
+                return False
                 
         except Exception as e:
             logger.error(f"Failed to update Telegram progress: {e}")
