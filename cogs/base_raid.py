@@ -8,6 +8,7 @@ class BaseRaid(commands.Cog):
         self.locked_channels = {}
         self.engagement_targets = {}
         self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
+        self.raid_mention = "<@&1316080159488606278>" # @everyone or <@&roleidnumber>
 
     async def check_raid_channel(self, ctx):
         """Check if the command is being used in the designated raid channel"""

@@ -175,7 +175,7 @@ class GeckoRaid(BaseRaid):
             color=0xFF0000
         )
         lock_embed.set_footer(text="Channel will automatically unlock when target is reached")
-        lock_message = await ctx.send(embed=lock_embed)
+        lock_message = await ctx.send(content=self.raid_mention, embed=lock_embed)
         
         # Initial progress message
         current_value = await self.get_metrics()

@@ -449,7 +449,7 @@ class TwitterRaid(BaseRaid):
                 color=0xFF0000  # Bright red
             )
             lock_embed.set_footer(text="Channel will automatically unlock when targets are reached")
-            lock_message = await ctx.send(embed=lock_embed)
+            lock_message = await ctx.send(content=self.raid_mention, embed=lock_embed)
 
             # Send Discord challenge message and store it 
             embed = await self.create_progress_embed(tweet_url, target_dict, initial_metrics)

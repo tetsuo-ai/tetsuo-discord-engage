@@ -3,7 +3,7 @@ from discord.ext import commands
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import websockets
 from typing import Optional, Dict, Any
@@ -54,54 +54,39 @@ class WhaleMonitor(commands.Cog):
         self.cleanup_task = None
 
     async def cleanup_messages(self):
-        """Keep only the most recent 200 messages in the whale alert channel"""
+        """Delete whale alert messages older than 3 days"""
         while True:
             try:
                 if not self.config.channel_id:
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(30)
                     continue
                     
                 channel = self.bot.get_channel(self.config.channel_id)
-                if not channel:
-                    await asyncio.sleep(60)
+                if not channel or not isinstance(channel, discord.TextChannel):
+                    await asyncio.sleep(30)
                     continue
 
-                if not isinstance(channel, discord.TextChannel):
-                    logger.warning("Whale alert channel is not a text channel")
-                    await asyncio.sleep(60)
-                    continue
-
-                messages = []
+                cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+                deleted = 0
+                
                 async for message in channel.history(limit=None):
-                    if message.channel.id != self.config.channel_id:
-                        continue
-                        
-                    if message.pinned:
-                        continue
-                    messages.append(message)
-                
-                if len(messages) > 200:
-                    messages.sort(key=lambda x: x.created_at, reverse=True)
-                    
-                    deleted_count = 0
-                    for message in messages[200:]:
+                    if not message.pinned and message.created_at < cutoff:
                         try:
-                            if message.channel.id == self.config.channel_id:
-                                await message.delete()
-                                deleted_count += 1
-                                await asyncio.sleep(1)
+                            await message.delete()
+                            deleted += 1
                         except Exception as e:
-                            logger.error(f"Error deleting message: {e}", exc_info=True)
-                            continue
-                    
-                    if deleted_count > 0:
-                        logger.info(f"Cleaned up {deleted_count} messages from whale alert channel")
+                            logger.error(f"Error deleting message: {e}")
+
+                if deleted:
+                    logger.info(f"Cleaned up {deleted} old whale alerts")
                 
-                await asyncio.sleep(300)
+                # Only sleep if we didn't find anything to delete
+                if not deleted:
+                    await asyncio.sleep(300)
                     
             except Exception as e:
-                logger.error(f"Error in whale channel cleanup: {e}", exc_info=True)
-                await asyncio.sleep(60)
+                logger.error(f"Whale cleanup error: {e}")
+                await asyncio.sleep(30)
 
     async def start_monitoring(self):
         """Monitor whale alerts via WebSocket"""
