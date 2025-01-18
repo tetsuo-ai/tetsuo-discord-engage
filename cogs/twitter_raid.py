@@ -230,11 +230,11 @@ class TwitterRaid(BaseRaid):
             })
             
             try:
-                await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
-                await ScrapeUtils.random_delay(random.uniform(3, 7))
+                await page.goto(tweet_url, wait_until="domcontentloaded", timeout=10000)
+                await ScrapeUtils.random_delay(random.uniform(2, 3))
                 
                 # Simulate human-like mouse movements
-                for _ in range(random.randint(2, 4)):
+                for _ in range(random.randint(1, 2)):
                     await page.mouse.move(
                         random.randint(0, 1000),
                         random.randint(0, 700)
@@ -243,7 +243,7 @@ class TwitterRaid(BaseRaid):
 
                 # Random scroll - Twitter often needs it
                 await page.evaluate(f'window.scrollTo(0, {random.randint(100, 400)})')
-                await asyncio.sleep(random.uniform(0.5, 1.5))
+                await asyncio.sleep(random.uniform(0.25, 0.75))
                 
                 # Handle the notifications popup with human-like interaction
                 try:
@@ -289,22 +289,6 @@ class TwitterRaid(BaseRaid):
                             if not button:
                                 logger.debug(f"No {button_type} button found")
                                 continue
-
-                            # Move mouse to each button naturally
-                            box = await button.bounding_box()
-                            if box:
-                                # First move nearby
-                                await page.mouse.move(
-                                    box['x'] + random.randint(-30, 30),
-                                    box['y'] + random.randint(-30, 30)
-                                )
-                                await asyncio.sleep(random.uniform(0.1, 0.3))
-                                # Then to button
-                                await page.mouse.move(
-                                    box['x'] + box['width']/2 + random.randint(-5, 5),
-                                    box['y'] + box['height']/2 + random.randint(-5, 5)
-                                )
-                                await asyncio.sleep(random.uniform(0.2, 0.4))
 
                             text = await button.evaluate('el => el.textContent')
                             if not text.strip():
