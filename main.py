@@ -120,10 +120,6 @@ async def main():
         await bot.load_extension('cogs.gecko_raid')
         logger.info("Gecko raid loaded successfully!")
 
-        logger.info("Loading GMGN raid extension...")
-        await bot.load_extension('cogs.gmgn_raid')
-        logger.info("GMGN raid loaded successfully!")
-
         logger.info("Loading Dextools raid extension...")
         await bot.load_extension('cogs.dextools_raid')
         logger.info("Dextools raid loaded successfully!")

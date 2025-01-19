@@ -91,29 +91,25 @@ class ChannelManager(commands.Cog):
                 # Get our raid cogs
                 cmc_raid = self.bot.get_cog('CMCRaid')
                 gecko_raid = self.bot.get_cog('GeckoRaid')
-                gmgn_raid = self.bot.get_cog('GmgnRaid')
                 dextools_raid = self.bot.get_cog('DextoolsRaid')
 
-                if not cmc_raid or not gecko_raid or not gmgn_raid or not dextools_raid:
+                if not cmc_raid or not gecko_raid or not dextools_raid:
                     await asyncio.sleep(300)
                     continue
 
                 # Fetch metrics
                 cmc_likes = await cmc_raid.get_metrics()
                 gecko_sentiment = await gecko_raid.get_metrics()
-                gmgn_sentiment = await gmgn_raid.get_metrics()
                 dextools_sentiment = await dextools_raid.get_metrics()
 
                 # Get trend indicators
                 cmc_trend = self.get_trend_indicator(cmc_likes, self.previous_metrics['cmc_likes'])
                 gecko_trend = self.get_trend_indicator(gecko_sentiment, self.previous_metrics['gecko_sentiment'])
-                gmgn_trend = self.get_trend_indicator(gmgn_sentiment, self.previous_metrics.get('gmgn_sentiment'))
                 dextools_trend = self.get_trend_indicator(dextools_sentiment, self.previous_metrics.get('dextools_sentiment'))
 
                 # Store current values as previous for next update
                 self.previous_metrics['cmc_likes'] = cmc_likes
                 self.previous_metrics['gecko_sentiment'] = gecko_sentiment
-                self.previous_metrics['gmgn_sentiment'] = gmgn_sentiment
                 self.previous_metrics['dextools_sentiment'] = dextools_sentiment
 
                 # Create metrics embed
@@ -144,17 +140,6 @@ class ChannelManager(commands.Cog):
                     inline=False
                 )
 
-                # Add separator
-                embed.add_field(name="\u200b", value="\u200b", inline=False)
-                embed.add_field(
-                    name="**GMGN.ai**",
-                    value=(
-                        f"Sentiment: **{gmgn_sentiment:.1f}%** {gmgn_trend}\n"
-                        "[View/Vote](https://gmgn.ai/sol/token/8i51XNNpGaKaj4G4nDdmQh95v4FKAxw8mhtaRoKd9tE8)"
-                    ),
-                    inline=False
-                )
-
                 # Add separator and Dextools
                 embed.add_field(name="\u200b", value="\u200b", inline=False)
                 embed.add_field(
@@ -170,15 +155,12 @@ class ChannelManager(commands.Cog):
                     changes = []
                     cmc_change = cmc_likes - self.previous_metrics['cmc_likes']
                     gecko_change = gecko_sentiment - self.previous_metrics['gecko_sentiment']
-                    gmgn_change = gmgn_sentiment - self.previous_metrics['gmgn_sentiment']
                     dextools_change = dextools_sentiment - self.previous_metrics['dextools_sentiment']
                     
                     if cmc_change != 0:
                         changes.append(f"CMC: {'+'if cmc_change>0 else ''}{cmc_change} votes")
                     if gecko_change != 0:
                         changes.append(f"Gecko: {'+'if gecko_change>0 else ''}{gecko_change:.1f}%")
-                    if gmgn_change != 0:
-                        changes.append(f"GMGN: {'+'if gmgn_change>0 else ''}{gmgn_change:.1f}%")
                     if dextools_change != 0:
                         changes.append(f"Dextools: {'+'if dextools_change>0 else ''}{dextools_change:.1f}%")
                     
@@ -329,7 +311,7 @@ class ChannelManager(commands.Cog):
             os.environ['RAID_CHANNEL_ID'] = channel_id
             
             # Update other cogs
-            for cog_name in ['TwitterRaid', 'CMCRaid', 'GeckoRaid', 'GmgnRaid', 'DextoolsRaid']:
+            for cog_name in ['TwitterRaid', 'CMCRaid', 'GeckoRaid', 'DextoolsRaid']:
                 if cog := self.bot.get_cog(cog_name):
                     cog.raid_channel_id = self.raid_channel_id
             
@@ -352,7 +334,6 @@ class ChannelManager(commands.Cog):
         twitter_raid = self.bot.get_cog('TwitterRaid')
         cmc_raid = self.bot.get_cog('CMCRaid')
         gecko_raid = self.bot.get_cog('GeckoRaid')
-        gmgn_raid = self.bot.get_cog('GmgnRaid')
         dextools_raid = self.bot.get_cog('DextoolsRaid')
         
         channel_locked = False
@@ -457,35 +438,6 @@ class ChannelManager(commands.Cog):
                 
             except Exception as e:
                 logger.error(f"Error in raid_stop (Gecko): {e}", exc_info=True)
-
-        # Add GMGN check
-        if gmgn_raid and ctx.channel.id in gmgn_raid.locked_channels:
-            try:
-                challenge_data = gmgn_raid.engagement_targets.get(ctx.channel.id)
-                if challenge_data:
-                    try:
-                        lock_message = await ctx.channel.fetch_message(challenge_data['lock_message_id'])
-                        if lock_message:
-                            await lock_message.delete()
-                    except discord.NotFound:
-                        logger.debug("Lock message already deleted")
-                    except Exception as e:
-                        logger.error(f"Error deleting lock message: {e}", exc_info=True)
-                        
-                    try:
-                        progress_message = await ctx.channel.fetch_message(challenge_data['message_id'])
-                        if progress_message:
-                            await progress_message.delete()
-                    except discord.NotFound:
-                        logger.debug("Progress message already deleted")
-                    except Exception as e:
-                        logger.error(f"Error deleting progress message: {e}", exc_info=True)
-
-                await gmgn_raid.unlock_channel(ctx.channel)
-                channel_locked = True
-                
-            except Exception as e:
-                logger.error(f"Error in raid_stop (GMGN): {e}", exc_info=True)
 
         # Add Dextools check
         if dextools_raid and ctx.channel.id in dextools_raid.locked_channels:

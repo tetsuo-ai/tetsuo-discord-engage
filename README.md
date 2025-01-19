@@ -8,7 +8,6 @@ A Discord bot for crypto community engagement tracking and coordination. Monitor
 - Twitter/X engagement tracking
 - CMC upvote monitoring
 - GeckoTerminal sentiment tracking
-- GMGN.ai sentiment tracking
 - Dextools sentiment tracking
 - Automated channel management
 - Progress tracking and notifications
@@ -72,7 +71,6 @@ python main.py
   ```
 - `!raid_cmc likes:<target> [timeout:<minutes>]` - Start a CMC raid
 - `!raid_gecko sentiment:<target> [timeout:<minutes>]` - Start a Gecko raid
-- `!raid_gmgn sentiment:<target> [timeout:<minutes>]` - Start a GMGN raid
 - `!raid_dextools sentiment:<target> [timeout:<minutes>]` - Start a Dextools raid
 - `!raid_stop` - End current raid and unlock channel
 
