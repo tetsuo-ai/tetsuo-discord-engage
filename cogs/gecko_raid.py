@@ -4,133 +4,37 @@ from discord.ext import commands
 from datetime import datetime, timezone
 import os
 import asyncio
-from playwright.async_api import async_playwright
-import random
-from .scrape_utils import ScrapeUtils
+import aiohttp
 import logging
+
 logger = logging.getLogger('tetsuo_bot.gecko_raid')
 
 class GeckoRaid(BaseRaid):
     def __init__(self, bot):
         super().__init__(bot)
-        self.browser = None
-        self.target_url = "https://www.geckoterminal.com/solana/pools/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6"
         self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
-
-    async def setup_playwright(self):
-        """Initialize the Playwright browser"""
-        if not self.browser:
-            try:
-                playwright = await async_playwright().start()
-                self.browser = await playwright.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox']
-                )
-                logger.info("Playwright browser initialized successfully")
-            except Exception as e:
-                logger.error(f"Error initializing Playwright: {e}", exc_info=True)
-                raise e
+        self.api_url = f"{os.getenv('API_URL')}/api/v1/sentiment/gecko"
+        self.api_token = os.getenv('API_TOKEN')
+        self.headers = {'Authorization': f'Bearer {self.api_token}'}
+        self.target_url = "https://www.geckoterminal.com/solana/pools/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6"
 
     async def get_metrics(self):
-        """Get current sentiment percentage from GeckoTerminal"""
-        if not self.browser:
-            await self.setup_playwright()
-
+        """Get current sentiment percentage from GeckoTerminal via API"""
         try:
-            # Get randomized headers
-            headers = ScrapeUtils.get_random_headers()
-            context = await self.browser.new_context(
-                user_agent=headers['User-Agent'],
-                extra_http_headers={k:v for k,v in headers.items() if k != 'User-Agent'}
-            )
-            
-            page = await context.new_page()
-            await page.set_viewport_size({
-                "width": random.randint(1024, 1920),
-                "height": random.randint(768, 1080)
-            })
-
-            try:
-                logger.info("Loading Gecko metrics")
-                await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
-                await ScrapeUtils.random_delay(random.uniform(3, 7))
-
-                # Simulate human-like mouse movements
-                for _ in range(random.randint(2, 4)):
-                    await page.mouse.move(
-                        random.randint(0, 1000),
-                        random.randint(0, 700)
-                    )
-                    await asyncio.sleep(random.uniform(0.1, 0.3))
-
-                # Random scroll
-                await page.evaluate(f'window.scrollTo(0, {random.randint(100, 300)})')
-                await asyncio.sleep(random.uniform(0.5, 1.5))
-                
-                logger.debug("Beginning sentiment question search...")
-                text_element = await page.query_selector("text='How do you feel about TETSUO/SOL today?'")
-                if text_element:
-                    logger.debug("Found sentiment question text")
-                    
-                    # Move mouse near the question text naturally
-                    box = await text_element.bounding_box()
-                    if box:
-                        await page.mouse.move(
-                            box['x'] + random.randint(5, 20),
-                            box['y'] + random.randint(5, 10)
-                        )
-                        await asyncio.sleep(random.uniform(0.2, 0.5))
-                    
-                    # Get the sentiment div with the width style
-                    percent_element = await page.query_selector("div.bg-buy[style*='width']")
-                    if percent_element:
-                        # Move mouse near the percentage element
-                        box = await percent_element.bounding_box()
-                        if box:
-                            await page.mouse.move(
-                                box['x'] + random.randint(5, 20),
-                                box['y'] + random.randint(5, 10)
-                            )
-                            await asyncio.sleep(random.uniform(0.2, 0.5))
-                        
-                        # Try getting percentage from text first
-                        text = await percent_element.inner_text()
-                        if text.strip():
-                            try:
-                                value = float(text.strip('%'))
-                                logger.info(f"Found sentiment from text: {value}%")
-                                return value
-                            except ValueError:
-                                pass
-                        
-                        # If text is empty or invalid, get it from the width style
-                        width_style = await percent_element.get_attribute('style')
-                        if width_style:
-                            try:
-                                width_value = width_style.split('width:')[1].split('%')[0].strip()
-                                value = float(width_value)
-                                logger.info(f"Found sentiment from width: {value}%")
-                                return value
-                            except:
-                                logger.warning("Could not extract percentage from width style")
-
-                logger.warning("Could not find sentiment percentage")
-                return 0
-                    
-            except Exception as e:
-                logger.error(f"Error during page processing: {e}", exc_info=True)
-                return 0
-                
-            finally:
-                if 'page' in locals():
-                    await page.close()
-                if 'context' in locals():
-                    await context.close()
-                    
+            logger.info("Loading Gecko metrics")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.api_url, headers=self.headers) as response:
+                    if response.status == 200:
+                        value = float(await response.text())
+                        logger.info(f"Found Gecko sentiment: {value}%")
+                        return value
+                    else:
+                        logger.error(f"API error: {response.status} - {await response.text()}")
+                        return 0
         except Exception as e:
-            logger.error(f"Browser error: {e}", exc_info=True)
+            logger.error(f"Error fetching Gecko metrics: {e}", exc_info=True)
             return 0
-    
+
     async def create_progress_embed(self, current_value, target_value):
         """Create progress embed for Gecko raids"""
         embed = discord.Embed(
@@ -230,7 +134,7 @@ class GeckoRaid(BaseRaid):
             except Exception as e:
                 logger.error(f"Error monitoring raid: {e}", exc_info=True)
             
-            await ScrapeUtils.random_delay(30)
+            await asyncio.sleep(30)
 
     @commands.command(name='raid_gecko')
     @commands.has_permissions(manage_channels=True)
@@ -286,10 +190,6 @@ class GeckoRaid(BaseRaid):
             logger.error(f"Error in raid_gecko: {e}", exc_info=True)
             await ctx.send(f"Error: {str(e)}")
             await self.unlock_channel(ctx.channel)
-
-    def cog_unload(self):
-        if self.browser:
-            asyncio.create_task(self.browser.close())
 
 async def setup(bot):
     await bot.add_cog(GeckoRaid(bot))

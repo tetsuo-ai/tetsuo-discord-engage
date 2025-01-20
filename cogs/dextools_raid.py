@@ -4,113 +4,37 @@ from discord.ext import commands
 from datetime import datetime, timezone
 import os
 import asyncio
-from playwright.async_api import async_playwright
-import random
-from .scrape_utils import ScrapeUtils
+import aiohttp
 import logging
+
 logger = logging.getLogger('tetsuo_bot.dextools_raid')
 
 class DextoolsRaid(BaseRaid):
     def __init__(self, bot):
         super().__init__(bot)
-        self.browser = None
-        self.target_url = "https://www.dextools.io/app/en/solana/pair-explorer/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6?t=1734332435607"
         self.raid_channel_id = int(os.getenv('RAID_CHANNEL_ID', 0)) or None
-
-    async def setup_playwright(self):
-        """Initialize the Playwright browser"""
-        if not self.browser:
-            try:
-                playwright = await async_playwright().start()
-                self.browser = await playwright.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox']
-                )
-            except Exception as e:
-                logger.error(f"Error initializing Playwright: {e}", exc_info=True)
-                raise e
+        self.api_url = f"{os.getenv('API_URL')}/api/v1/sentiment/dextools"
+        self.api_token = os.getenv('API_TOKEN')
+        self.headers = {'Authorization': f'Bearer {self.api_token}'}
+        self.target_url = "https://www.dextools.io/app/en/solana/pair-explorer/2KB3i5uLKhUcjUwq3poxHpuGGqBWYwtTk5eG9E5WnLG6"
 
     async def get_metrics(self):
-        """Get current sentiment percentage from Dextools"""
-        if not self.browser:
-            await self.setup_playwright()
-
+        """Get current sentiment percentage from Dextools via API"""
         try:
-            headers = ScrapeUtils.get_random_headers()
-            context = await self.browser.new_context(
-                user_agent=headers['User-Agent'],
-                extra_http_headers={k:v for k,v in headers.items() if k != 'User-Agent'}
-            )
-            
-            page = await context.new_page()
-            await page.set_viewport_size({
-                "width": random.randint(1024, 1920),
-                "height": random.randint(768, 1080)
-            })
-
-            try:
-                logger.info("Loading Dextools metrics")
-                await page.goto(self.target_url, wait_until="domcontentloaded", timeout=60000)
-                await ScrapeUtils.random_delay(random.uniform(3, 7))  # SPA needs time to hydrate
-
-                # Simulate human-like mouse movements
-                for _ in range(random.randint(2, 4)):
-                    await page.mouse.move(
-                        random.randint(0, 1000),
-                        random.randint(0, 700)
-                    )
-                    await asyncio.sleep(random.uniform(0.1, 0.3))
-
-                # Random scroll - Dextools often needs scrolling to load content
-                await page.evaluate(f'window.scrollTo(0, {random.randint(200, 500)})')
-                await asyncio.sleep(random.uniform(0.8, 1.5))
-                
-                # Target the sentiment percentage span directly
-                percent_element = await page.query_selector('span.percent.buy-color')
-                if percent_element:
-                    # Move mouse naturally to element
-                    box = await percent_element.bounding_box()
-                    if box:
-                        # First move to general area
-                        await page.mouse.move(
-                            box['x'] + random.randint(-50, 50),
-                            box['y'] + random.randint(-50, 50)
-                        )
-                        await asyncio.sleep(random.uniform(0.1, 0.3))
-                        # Then to specific element
-                        await page.mouse.move(
-                            box['x'] + random.randint(5, 20),
-                            box['y'] + random.randint(5, 10)
-                        )
-                        await asyncio.sleep(random.uniform(0.2, 0.5))
-                    
-                    text = await percent_element.text_content()
-                    try:
-                        # Strip the % and whitespace, convert to float
-                        value = float(text.strip().rstrip('%'))
-                        logger.info(f"Found sentiment value: {value}%")
+            logger.info("Loading Dextools metrics")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.api_url, headers=self.headers) as response:
+                    if response.status == 200:
+                        value = float(await response.text())
+                        logger.info(f"Found Dextools sentiment: {value}%")
                         return value
-                    except ValueError:
-                        logger.warning(f"Could not convert '{text}' to float")
-                else:
-                    logger.warning("Could not find sentiment percentage element")
-                
-                return 0
-                    
-            except Exception as e:
-                logger.error(f"Error during page processing: {e}", exc_info=True)
-                return 0
-                
-            finally:
-                if 'page' in locals():
-                    await page.close()
-                if 'context' in locals():
-                    await context.close()
-                    
+                    else:
+                        logger.error(f"API error: {response.status} - {await response.text()}")
+                        return 0
         except Exception as e:
-            logger.error(f"Browser error: {e}", exc_info=True)
+            logger.error(f"Error fetching Dextools metrics: {e}", exc_info=True)
             return 0
-    
+
     async def create_progress_embed(self, current_value, target_value):
         """Create progress embed for Dextools raids"""
         embed = discord.Embed(
@@ -210,7 +134,7 @@ class DextoolsRaid(BaseRaid):
             except Exception as e:
                 logger.error(f"Error monitoring raid: {e}", exc_info=True)
             
-            await ScrapeUtils.random_delay(30)  # 30 seconds base with jitter
+            await asyncio.sleep(30)
 
     @commands.command(name='raid_dextools')
     @commands.has_permissions(manage_channels=True)
@@ -266,10 +190,6 @@ class DextoolsRaid(BaseRaid):
             logger.error(f"Error in raid_dextools: {e}", exc_info=True)
             await ctx.send(f"Error: {str(e)}")
             await self.unlock_channel(ctx.channel)
-
-    def cog_unload(self):
-        if self.browser:
-            asyncio.create_task(self.browser.close())
 
 async def setup(bot):
     await bot.add_cog(DextoolsRaid(bot))
