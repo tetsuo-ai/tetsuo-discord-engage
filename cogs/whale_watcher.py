@@ -3,10 +3,10 @@ from discord.ext import commands
 import asyncio
 import json
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 import websockets
-from typing import Optional, Dict, Any
+from typing import Optional
 import logging
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -32,7 +32,6 @@ class BotConfig(BaseModel):
 
 class Settings(BaseSettings):
     """Discord bot whale watcher settings"""
-    API_URL: str = "http://localhost:8080"
     WS_URL: str = "ws://localhost:8080/ws"
     
     class Config:
@@ -66,62 +65,33 @@ class WhaleMonitor(commands.Cog):
                     await asyncio.sleep(30)
                     continue
 
-                cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+                cutoff = datetime.now(timezone.utc).timestamp() - (3 * 24 * 60 * 60)  # 3 days in seconds
                 deleted = 0
                 
                 async for message in channel.history(limit=None):
-                    if not message.pinned and message.created_at < cutoff:
+                    if (not message.pinned and 
+                        message.created_at.timestamp() < cutoff and 
+                        message.author == self.bot.user):
                         try:
                             await message.delete()
                             deleted += 1
+                            await asyncio.sleep(1)  # Rate limiting protection
                         except Exception as e:
                             logger.error(f"Error deleting message: {e}")
 
                 if deleted:
                     logger.info(f"Cleaned up {deleted} old whale alerts")
                 
-                # Only sleep if we didn't find anything to delete
-                if not deleted:
-                    await asyncio.sleep(300)
+                await asyncio.sleep(300)  # Check every 5 minutes
                     
             except Exception as e:
                 logger.error(f"Whale cleanup error: {e}")
                 await asyncio.sleep(30)
 
-    async def start_monitoring(self):
-        """Monitor whale alerts via WebSocket"""
-        while True:
-            try:
-                async with websockets.connect(self.settings.WS_URL) as ws:
-                    logger.info("WebSocket connected to whale alert service")
-                    
-                    while True:
-                        try:
-                            message = await ws.recv()
-                            data = json.loads(message)
-                            
-                            if data.get('event_type') == 'new_whale':
-                                logger.info("New whale event received!")
-                                await self.handle_whale_alert(data['data'])
-                                
-                        except websockets.ConnectionClosed:
-                            logger.warning("WebSocket connection closed")
-                            break
-                        except json.JSONDecodeError as je:
-                            logger.error(f"JSON decode error: {je}")
-                        except Exception as e:
-                            logger.error(f"WebSocket message processing error: {e}")
-                            
-            except Exception as e:
-                logger.error(f"WebSocket connection error: {e}")
-                
-            if not self.bot.is_closed():
-                await asyncio.sleep(5)
-            else:
-                break
-
-    async def handle_whale_alert(self, data: Dict[str, Any]):
+    async def handle_whale_alert(self, data: dict):
         """Process and send whale alert to Discord"""
+        logger.info(f"Handling whale alert. Config: {self.config}")
+        
         if not self.config.channel_id:
             logger.warning("No channel ID configured")
             return
@@ -140,75 +110,93 @@ class WhaleMonitor(commands.Cog):
             logger.info(f"Transaction below threshold: ${transaction['amount_usd']} < ${self.config.min_threshold}")
             return
 
-        alert = data['alert']
-        token_stats = data.get('token_stats', {})
-
-        # Determine alert type based on size
-        usd_value = transaction['amount_usd']
-        if usd_value >= 50000:
-            title = "🐋 ABSOLUTELY MASSIVE WHALE ALERT! 🐋"
-            excitement = "HOLY MOTHER OF ALL WHALES!"
-            gif_url = "https://media1.tenor.com/m/6TbYHcZ2wQwAAAAd/whale-ocean.gif"
-        elif usd_value >= 20000:
-            title = "🌊 HUGE Whale Alert! 🌊"
-            excitement = "Now that's what I call a splash!"
-            gif_url = "https://media1.tenor.com/m/6TbYHcZ2wQwAAAAd/whale-ocean.gif"
-        elif usd_value >= 5000:
-            title = "💦 Big Whale Alert! 💦"
-            excitement = "Making waves!"
-            gif_url = "https://media1.tenor.com/m/6TbYHcZ2wQwAAAAd/whale-ocean.gif"
-        elif usd_value >= 2000:
-            title = "💫 Shark Alert! So Ferocious! 💫"
-            excitement = "Nice buy!"
-            gif_url = "https://media1.tenor.com/m/9jbUEncewVkAAAAd/ebisu-mappa.gif"
-        else:
-            title = "✨ Baby Shark Alert ✨"
-            excitement = "Every shark starts somewhere!"
-            gif_url = "https://media1.tenor.com/m/x-rwdPINKUYAAAAd/tuna-guitar.gif"
-
-        embed = discord.Embed(
-            title=title,
-            description=excitement,
-            color=0x00ff00,
-            timestamp=datetime.now(timezone.utc)
-        )
+        alert_data = data['alert']
+        token_stats = data['token_stats']
         
-        embed.set_image(url=gif_url)
-
-        info_line = (
-            f"💰 ${transaction['amount_usd']:,.2f} • "
-            f"🎯 ${transaction['price_usd']:.6f} • "
-            f"📊 {transaction['amount_tokens']:,.0f} TETSUO"
+        # Create embed from alert data
+        embed = discord.Embed(
+            title=alert_data['title'],
+            description=(
+                f"💰 Buy Size: ${transaction['amount_usd']:,.2f}\n"
+                f"🎯 Buy Price: ${transaction['price_usd']:.8f}\n"
+                f"📊 Amount: {transaction['amount_tokens']:,.2f} TETSUO\n"
+                f"📈 24h Volume: ${float(token_stats['volume_24h'] or 0):,.2f}\n"
+                f"💎 Market Cap: ${float(token_stats['market_cap'] or 0):,.2f}\n"
+                f"💵 Current Price: ${float(token_stats['price_usd'] or 0):.8f}\n"
+                f"🔍 [View on Solscan](https://solscan.io/tx/{transaction['transaction_hash']})"
+            ),
+            color=alert_data['color'],
+            timestamp=datetime.fromisoformat(alert_data['timestamp'])
         )
-        embed.add_field(
-            name="Transaction Details",
-            value=info_line,
-            inline=False
-        )
 
-        if token_stats:
-            market_stats = (
-                f"📈 24h Volume: ${float(token_stats.get('volume_24h', 0)):,.2f}\n"
-                f"💎 Market Cap: ${float(token_stats.get('market_cap', 0)):,.2f}\n"
-                f"💵 Current Price: ${float(token_stats.get('price_usd', 0)):,.8f}"
-            )
-            embed.add_field(
-                name="Market Stats",
-                value=market_stats,
-                inline=False
-            )
-
-        embed.add_field(
-            name="🔍 Transaction",
-            value=f"[View on Solscan](https://solscan.io/tx/{transaction['transaction_hash']})",
-            inline=False
-        )
+        if 'image' in alert_data and 'url' in alert_data['image']:
+            embed.set_image(url=alert_data['image']['url'])
 
         try:
             await channel.send(embed=embed)
             logger.info(f"Successfully sent alert for tx: {transaction['transaction_hash']}")
         except Exception as e:
-            logger.error(f"Error sending whale alert: {e}", exc_info=True)
+            logger.error(f"Error sending alert: {e}", exc_info=True)
+            try:
+                channel = await self.bot.fetch_channel(self.config.channel_id)
+                logger.info(f"Channel details: {channel}")
+            except Exception as channel_error:
+                logger.error(f"Could not retrieve channel details: {channel_error}")
+
+    async def start_monitoring(self):
+        """Monitor whale alerts via WebSocket"""
+        while True:
+            try:
+                async with websockets.connect(self.settings.WS_URL) as ws:
+                    logger.info("WebSocket connected")
+                    
+                    while True:
+                        try:
+                            message = await ws.recv()
+                            logger.info(f"Raw WebSocket message: {message}")
+                            
+                            data = json.loads(message)
+                            logger.info(f"Parsed WebSocket data: {data}")
+                            
+                            if data.get('event_type') == 'new_whale':
+                                logger.info("New whale event received!")
+                                await self.handle_whale_alert(data['data'])
+                            else:
+                                logger.info(f"Received non-whale event: {data.get('event_type')}")
+                                
+                        except websockets.ConnectionClosed:
+                            logger.warning("WebSocket connection closed")
+                            break
+                        except json.JSONDecodeError as je:
+                            logger.error(f"JSON decode error: {je}")
+                        except Exception as e:
+                            logger.error(f"WebSocket message processing error: {e}")
+                            
+            except Exception as e:
+                logger.error(f"WebSocket connection error: {e}")
+                
+            # Retry connection if disconnected
+            if not self.bot.is_closed():
+                await asyncio.sleep(5)
+            else:
+                break
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Start monitoring when bot is ready"""
+        if not self._ws_task:
+            self._ws_task = self.bot.loop.create_task(self.start_monitoring())
+            logger.info("Whale Monitor: Started monitoring")
+        if not self.cleanup_task:
+            self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
+            logger.info("Whale Monitor: Started channel cleanup task")
+
+    def cog_unload(self):
+        """Cleanup when cog is unloaded"""
+        if self._ws_task:
+            self._ws_task.cancel()
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
 
     @commands.command(name='set_whale_channel')
     @commands.has_permissions(administrator=True)
@@ -324,23 +312,6 @@ class WhaleMonitor(commands.Cog):
             )
             
         await ctx.send(embed=embed, delete_after=30)
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        """Start monitoring when bot is ready"""
-        if not self._ws_task:
-            self._ws_task = self.bot.loop.create_task(self.start_monitoring())
-            logger.info("Whale Monitor: Started monitoring")
-        if not self.cleanup_task:
-            self.cleanup_task = self.bot.loop.create_task(self.cleanup_messages())
-            logger.info("Whale Monitor: Started channel cleanup task")
-
-    def cog_unload(self):
-        """Cleanup when cog is unloaded"""
-        if self._ws_task:
-            self._ws_task.cancel()
-        if self.cleanup_task:
-            self.cleanup_task.cancel()
 
 async def setup(bot):
     await bot.add_cog(WhaleMonitor(bot))
